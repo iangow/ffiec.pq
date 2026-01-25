@@ -1,0 +1,34 @@
+#' Load FFIEC schema mapping
+#'
+#' Returns the FFIEC XBRL schema bundled with the package.
+#'
+#' @return A tibble containing schema metadata.
+#' @export
+get_ffiec_schema <- function() {
+  utils::data("ffiec_schema", package = "ffiec.pq", envir = environment())
+  ffiec_schema
+}
+
+#' Default XBRL-to-readr mapping
+#' @keywords internal
+#' @noRd
+default_xbrl_to_readr <- function() {
+  c(
+    "xbrli:monetaryItemType"              = "d",
+    "ffieci:nonNegativeMonetaryItemType"  = "d",
+    "xbrli:integerItemType"               = "d",
+    "xbrli:nonNegativeIntegerItemType"    = "d",
+    "xbrli:pureItemType"                  = "c",
+    "xbrli:booleanItemType"               = "l",
+    "xbrli:stringItemType"                = "c"
+  )
+}
+
+#' Default FFIEC column type overrides
+#' @keywords internal
+#' @noRd
+default_ffiec_col_overrides <- function() {
+  c(
+    "RCON8678" = "c"  # force character
+  )
+}
