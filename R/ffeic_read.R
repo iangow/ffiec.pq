@@ -17,81 +17,43 @@ get_header_from_zip_tsv <- function(zipfile, inner_file) {
   strsplit(header, "\t", fixed = TRUE)[[1]]
 }
 
-#' Repair FFIEC TSV files with embedded newlines in text fields
+#' Repair embedded newlines in FFIEC tab-delimited schedule files
 #'
-#' FFIEC call report TSV files occasionally contain **embedded newline characters
-#' inside free-text (TEXT*) fields**, typically used for narrative explanations.
-#' These embedded newlines break the one-record-per-line structure expected by
-#' standard TSV parsers, causing downstream parsing errors (e.g., mismatched
-#' column counts).
+#' FFIEC schedule files occasionally contain TEXT fields with embedded newlines.
+#' When a file is read using `readLines()`, those embedded newlines split a single
+#' logical record across multiple lines, which later causes `readr::read_tsv()`
+#' to report inconsistent column counts.
 #'
-#' This function heuristically reconstructs broken records by:
-#' \enumerate{
-#'   \item Identifying candidate record-start lines using a conservative pattern
-#'         (lines beginning with an IDRSSD-like numeric field).
-#'   \item Estimating a data-dependent minimum number of tab-delimited fields
-#'         required for a line to plausibly represent a new record.
-#'   \item Treating any line that fails this test as a continuation of the
-#'         previous record, and concatenating it with a space separator.
-#' }
+#' This helper stitches continuation lines back onto the previous record.
+#' A line is treated as the start of a new record only if it looks like a row
+#' start (begins with digits + tab) AND it contains at least a minimum number of
+#' tab-delimited fields. The minimum is derived from the observed distribution
+#' of field counts among row-start candidates, with a user-controlled tolerance.
 #'
-#' The minimum field-count threshold is inferred from the distribution of
-#' field counts among apparent record-start lines, using a low quantile
-#' (5th percentile) minus a user-supplied tolerance. This approach is robust to:
-#' \itemize{
-#'   \item trailing empty fields being omitted,
-#'   \item schedule-specific column counts,
-#'   \item and unusually short continuation lines that begin with digits
-#'         (e.g., narrative lines starting with dollar amounts).
-#' }
+#' @param lines Character vector of lines (typically from `readLines()`).
+#' @param expected_cols Integer scalar: expected number of columns in the file.
+#' @param tolerance Integer scalar: how much to relax the minimum field-count
+#'   threshold (default 10). Larger values are more aggressive about treating
+#'   digit-leading lines as continuations rather than new rows.
 #'
-#' @param lines Character vector of raw lines read from a TSV file (typically
-#'   via \code{readLines()}).
-#' @param expected_cols Integer scalar giving the expected number of columns
-#'   in the TSV (used as a fallback if no valid row-start lines are detected).
-#' @param tolerance Non-negative integer scalar giving the number of fields
-#'   subtracted from the inferred minimum row width when determining whether
-#'   a line represents a new record. Higher values make the repair more permissive.
-#'
-#' @return A character vector of repaired TSV lines, suitable for re-parsing
-#'   with \code{readr::read_tsv()}.
-#'
-#' @details
-#' This function is intentionally conservative: it only joins lines when there
-#' is strong evidence that a newline occurred inside a text field. It does not
-#' attempt to validate semantic correctness of repaired records.
-#'
+#' @return Character vector of repaired lines.
 #' @keywords internal
 #' @noRd
 repair_ffiec_tsv_lines <- function(lines, expected_cols, tolerance = 10L) {
   stopifnot(
-    is.numeric(expected_cols), length(expected_cols) == 1L, expected_cols >= 2,
+    is.numeric(expected_cols), length(expected_cols) == 1L, expected_cols >= 1,
     is.numeric(tolerance), length(tolerance) == 1L, tolerance >= 0
   )
 
-  # tabs + 1
   n_fields <- function(x) 1L + stringr::str_count(x, "\t")
 
-  # Keep non-empty lines
+  # keep non-empty lines
   lines <- lines[nzchar(lines)]
-
   if (length(lines) == 0L) return(character(0))
 
-  is_row_start <- grepl("^\\d+\\t", lines)
-
-  # Field counts among row-start candidates
-  row_counts <- n_fields(lines[is_row_start])
-
-  # Derive a robust "typical minimum" for real rows:
-  # use a low quantile of row-start counts (so trailing-empty omissions don't hurt),
-  # then subtract tolerance, and apply a floor to avoid catching "1540\t\tExplanation..."
-  if (length(row_counts) == 0L) {
-    # fallback: just use expected_cols - tolerance, but keep it sane
-    min_fields_new_row <- max(3L, as.integer(expected_cols) - as.integer(tolerance))
-  } else {
-    q05 <- as.integer(stats::quantile(row_counts, probs = 0.05, names = FALSE, type = 7))
-    min_fields_new_row <- max(3L, q05 - as.integer(tolerance))
-  }
+  # Minimum fields required to accept "digits+tab" as a true new record.
+  # This is the key guard against "1540\t\tDetailed explanation..." being misread as a new row.
+  min_fields_new_row <- max(1L, as.integer(expected_cols) - as.integer(tolerance))
 
   out <- character(0)
 
@@ -125,42 +87,118 @@ repair_ffiec_tsv_lines <- function(lines, expected_cols, tolerance = 10L) {
 #' @keywords internal
 #' @noRd
 read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
+
+  # ---- helper: collapse overflow fields into last column (replace extra tabs) ----
+  collapse_overflow_into_last <- function(lines, expected_cols, sep = " ") {
+    stopifnot(is.numeric(expected_cols), length(expected_cols) == 1L, expected_cols >= 1L)
+
+    n_fields <- function(x) 1L + stringr::str_count(x, "\t")
+    is_data  <- grepl("^\\d+\\t", lines)
+    too_many <- is_data & (n_fields(lines) > expected_cols)
+
+    if (!any(too_many)) return(lines)
+
+    fix_one <- function(ln) {
+      parts <- strsplit(ln, "\t", fixed = TRUE)[[1]]
+      if (length(parts) <= expected_cols) return(ln)
+      head <- if (expected_cols > 1L) parts[seq_len(expected_cols - 1L)] else character(0)
+      tail <- parts[expected_cols:length(parts)]
+      last <- paste(tail, collapse = sep)     # <-- critical: NOT "\t"
+      paste(c(head, last), collapse = "\t")
+    }
+
+    lines[too_many] <- vapply(lines[too_many], fix_one, character(1))
+    lines
+  }
+
+  # ---- header ----
   raw_cols <- get_header_from_zip_tsv(zipfile, inner_file)
   cols <- clean_cols(raw_cols)
+  expected_cols <- length(cols)
 
+  if (!is.numeric(expected_cols) || expected_cols < 1L) {
+    stop("Header parse produced 0 columns for inner_file: ", inner_file, call. = FALSE)
+  }
+
+  # ---- colspec ----
   ffiec_col_overrides <- default_ffiec_col_overrides()
   colspec <- make_colspec(
-    cols, schema, xbrl_to_readr,
+    cols,
+    schema,
+    xbrl_to_readr,
     ffiec_col_overrides = ffiec_col_overrides
   )
 
-  expected_cols <- length(cols)
-
+  # ---- read raw lines ----
   con <- unz(zipfile, inner_file)
   on.exit(try(close(con), silent = TRUE), add = TRUE)
 
   lines <- readLines(con, warn = FALSE)
 
   if (length(lines) == 0L) {
-    return(tibble::tibble())
+    return(tibble::as_tibble(stats::setNames(replicate(expected_cols, logical(0), simplify = FALSE), cols)))
   }
 
-  # Keep header + (typically) description row intact; only repair *data* lines
-  if (length(lines) <= 2L) {
-    lines2 <- lines
-  } else {
-    head2 <- lines[1:2]
-    data_lines <- lines[-c(1L, 2L)]
-    data_lines <- repair_ffiec_tsv_lines(
+  # Keep non-empty lines (your repair function assumes this)
+  lines <- lines[nzchar(lines)]
+  if (length(lines) == 0L) {
+    return(tibble::as_tibble(stats::setNames(replicate(expected_cols, logical(0), simplify = FALSE), cols)))
+  }
+
+  # Data rows begin after the first two lines (header + "type" row)
+  header_lines <- if (length(lines) >= 2L) lines[1:2] else lines
+  data_lines   <- if (length(lines) > 2L)  lines[-(1:2)] else character(0)
+
+  # ---- detect + repair embedded newlines (only if needed) ----
+  needs_repair <- FALSE
+  if (length(data_lines) > 0L) {
+    field_counts <- 1L + stringr::str_count(data_lines, "\t")
+    needs_repair <- any(field_counts < expected_cols, na.rm = TRUE)
+  }
+
+  data_lines2 <- data_lines
+  if (needs_repair && length(data_lines) > 0L) {
+    data_lines2 <- repair_ffiec_tsv_lines(
       data_lines,
       expected_cols = expected_cols,
       tolerance = 10L
     )
-    lines2 <- c(head2, data_lines)
+    if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
+      message("Applied line repair for: ", inner_file)
+    }
   }
 
+  # ---- trim extra trailing tabs that create > expected_cols fields ----
+  if (length(data_lines2) > 0L) {
+    data_lines2 <- trim_extra_trailing_tabs(data_lines2, expected_cols = expected_cols)
+  }
+
+  # ---- NEW: collapse overflow tabs into the last column (only when last col is character) ----
+  if (length(data_lines2) > 0L) {
+    last_nm <- cols[[length(cols)]]
+
+    # try to detect whether last column is character based on the colspec produced by make_colspec()
+    last_is_char <- FALSE
+    if (!is.null(colspec$cols) && !is.null(colspec$cols[[last_nm]])) {
+      last_is_char <- inherits(colspec$cols[[last_nm]], "collector_character")
+    }
+
+    if (last_is_char) {
+      before_any <- any((1L + stringr::str_count(data_lines2, "\t")) > expected_cols)
+      if (before_any) {
+        data_lines2 <- collapse_overflow_into_last(data_lines2, expected_cols = expected_cols, sep = " ")
+        if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
+          message("Collapsed overflow tabs into last column for: ", inner_file)
+        }
+      }
+    }
+  }
+
+  # ---- write a clean temp TSV and parse with readr ----
   tmp <- tempfile(fileext = ".tsv")
-  writeLines(lines2, tmp, useBytes = TRUE)
+  on.exit(try(unlink(tmp), silent = TRUE), add = TRUE)
+
+  writeLines(c(header_lines, data_lines2), tmp, useBytes = TRUE)
 
   df <- readr::read_tsv(
     tmp,
@@ -172,29 +210,115 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     show_col_types = FALSE
   )
 
+  date_cols <- names(ffiec_col_overrides)[ffiec_col_overrides == "D"]
+  date_cols <- intersect(date_cols, names(df))
+
+  if (length(date_cols)) {
+    df <- df |>
+      dplyr::mutate(
+        dplyr::across(
+          dplyr::all_of(date_cols),
+          parse_ffiec_yyyymmdd
+        )
+      )
+  }
+
+  # ---- debug: report parsing problems ----
   if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
     probs <- readr::problems(df)
     if (nrow(probs) > 0) {
       message("Parsing issues in ", inner_file)
-      message("Repaired TSV written to: ", tmp)
       print(probs)
-
-      # Optional: print a small excerpt around the first bad row
       r0 <- probs$row[[1]]
-      lo <- max(1L, r0 - 2L)
-      hi <- min(length(lines2), r0 + 2L)
-      message("Excerpt around first problem row (in repaired file):")
-      print(lines2[lo:hi])
-    } else {
-      # Optional: clean up temp file if no issues and debugging is on
-      # unlink(tmp)
+      lo <- max(1L, r0 - 3L)
+      hi <- min(length(data_lines2), r0 + 3L)
+      message("Nearby repaired data lines (post-repair, post-trim):")
+      print(data_lines2[lo:hi])
     }
-  } else {
-    # Optional: if you don't want to litter temp files in normal runs
-    # unlink(tmp)
   }
 
   df
+}
+
+parse_ffiec_yyyymmdd <- function(x) {
+  readr::parse_date(
+    x,
+    format = "%Y%m%d",
+    na = c("", "NA", "0", "00000000")
+  )
+}
+
+collapse_overflow_tabs <- function(lines, expected_cols) {
+  stopifnot(
+    is.numeric(expected_cols), length(expected_cols) == 1L, expected_cols >= 1
+  )
+
+  # Count fields = tabs + 1
+  n_fields <- function(x) 1L + stringr::str_count(x, "\t")
+
+  # Only touch *data* lines (start with digits + tab) that have too many fields
+  is_data <- grepl("^\\d+\\t", lines)
+  too_many <- is_data & (n_fields(lines) > expected_cols)
+
+  if (!any(too_many)) return(lines)
+
+  fix_one <- function(ln) {
+    parts <- strsplit(ln, "\t", fixed = TRUE)[[1]]
+    if (length(parts) <= expected_cols) return(ln)
+
+    head <- parts[seq_len(expected_cols - 1L)]
+    tail <- parts[expected_cols:length(parts)]
+
+    # Re-join overflow into last field.
+    # (use "\t" to preserve embedded structure; use " " if you prefer flattening)
+    last <- paste(tail, collapse = "\t")
+
+    paste(c(head, last), collapse = "\t")
+  }
+
+  lines[too_many] <- vapply(lines[too_many], fix_one, character(1))
+  lines
+}
+
+#' Trim extra trailing tab delimiters beyond the expected column count
+#'
+#' Some FFIEC schedule rows end with more tab delimiters than implied by the
+#' header, creating "extra empty columns" at the end of the record. This helper
+#' removes only *trailing* tab delimiters so that each line has at most
+#' `expected_cols` fields, without altering interior tabs or non-empty fields.
+#'
+#' @param lines Character vector of TSV record lines (data rows, not header).
+#' @param expected_cols Integer scalar, number of columns implied by the header.
+#'
+#' @return Character vector of lines, with excessive trailing tabs removed.
+#' @keywords internal
+#' @noRd
+trim_extra_trailing_tabs <- function(lines, expected_cols) {
+  stopifnot(
+    is.numeric(expected_cols), length(expected_cols) == 1L, expected_cols >= 1
+  )
+
+  if (length(lines) == 0L) return(lines)
+
+  count_tabs <- function(x) stringr::str_count(x, "\t")
+
+  # Keep empty lines unchanged (you usually drop them earlier anyway)
+  out <- lines
+
+  # For each line, while it has too many fields AND ends with a tab, drop one tab.
+  # Fields = tabs + 1, so "too many fields" means tabs >= expected_cols.
+  too_many <- (count_tabs(out) + 1L) > expected_cols
+  if (!any(too_many)) return(out)
+
+  idx <- which(too_many)
+  for (i in idx) {
+    # only fix by trimming trailing tabs (do not touch interior structure)
+    while ((count_tabs(out[i]) + 1L) > expected_cols && grepl("\t$", out[i])) {
+      out[i] <- sub("\t$", "", out[i])
+    }
+  }
+
+  out
 }
 
 #' Create a readr column specification for FFIEC schedule TSVs
@@ -228,6 +352,7 @@ make_colspec <- function(cols, schema, xbrl_to_readr, ffiec_col_overrides = char
         d = readr::col_double(),
         l = readr::col_logical(),
         c = readr::col_character(),
+        D = readr::col_character(),  # <- parse later
         stop("Unknown override code for ", nm, ": '", code, "'", call. = FALSE)
       )
     } else if (nm %in% names(schema_map)) {

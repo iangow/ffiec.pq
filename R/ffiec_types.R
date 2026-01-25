@@ -29,6 +29,7 @@ default_xbrl_to_readr <- function() {
 #' @noRd
 default_ffiec_col_overrides <- function() {
   c(
-    "RCON8678" = "c"  # force character
+    "RCON8678" = "c",  # text / mixed content
+    "RCON9999" = "D"   # date-like, parse later
   )
 }
