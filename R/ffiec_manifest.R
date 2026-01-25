@@ -19,7 +19,7 @@
 #'   \item{date_raw}{Report date in YYYYMMDD form.}
 #' }
 #' @export
-list_ffiec_zips <- function(raw_dir = NULL, schema = "ffiec") {
+ffiec_list_zips <- function(raw_dir = NULL, schema = "ffiec") {
   raw_dir <- resolve_raw_dir(raw_dir, schema)
 
   if (is.null(raw_dir) || !nzchar(raw_dir)) {

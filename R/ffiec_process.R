@@ -368,7 +368,7 @@ process_ffiec_zips <- function(raw_dir = NULL, zipfiles = NULL, out_dir = NULL, 
       stop("Provide `zipfiles`, or provide `raw_dir`, or set RAW_DATA_DIR.")
     }
 
-    zipfiles <- list_ffiec_zips(raw_dir)$zipfile
+    zipfiles <- ffiec_list_zips(raw_dir)$zipfile
   }
 
   zipfiles <- normalizePath(zipfiles, mustWork = FALSE)
