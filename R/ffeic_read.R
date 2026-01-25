@@ -17,18 +17,100 @@ get_header_from_zip_tsv <- function(zipfile, inner_file) {
   strsplit(header, "\t", fixed = TRUE)[[1]]
 }
 
-repair_ffiec_tsv_lines <- function(lines) {
-  is_new_row <- grepl("^\\d+\\t", lines)
+#' Repair FFIEC TSV files with embedded newlines in text fields
+#'
+#' FFIEC call report TSV files occasionally contain **embedded newline characters
+#' inside free-text (TEXT*) fields**, typically used for narrative explanations.
+#' These embedded newlines break the one-record-per-line structure expected by
+#' standard TSV parsers, causing downstream parsing errors (e.g., mismatched
+#' column counts).
+#'
+#' This function heuristically reconstructs broken records by:
+#' \enumerate{
+#'   \item Identifying candidate record-start lines using a conservative pattern
+#'         (lines beginning with an IDRSSD-like numeric field).
+#'   \item Estimating a data-dependent minimum number of tab-delimited fields
+#'         required for a line to plausibly represent a new record.
+#'   \item Treating any line that fails this test as a continuation of the
+#'         previous record, and concatenating it with a space separator.
+#' }
+#'
+#' The minimum field-count threshold is inferred from the distribution of
+#' field counts among apparent record-start lines, using a low quantile
+#' (5th percentile) minus a user-supplied tolerance. This approach is robust to:
+#' \itemize{
+#'   \item trailing empty fields being omitted,
+#'   \item schedule-specific column counts,
+#'   \item and unusually short continuation lines that begin with digits
+#'         (e.g., narrative lines starting with dollar amounts).
+#' }
+#'
+#' @param lines Character vector of raw lines read from a TSV file (typically
+#'   via \code{readLines()}).
+#' @param expected_cols Integer scalar giving the expected number of columns
+#'   in the TSV (used as a fallback if no valid row-start lines are detected).
+#' @param tolerance Non-negative integer scalar giving the number of fields
+#'   subtracted from the inferred minimum row width when determining whether
+#'   a line represents a new record. Higher values make the repair more permissive.
+#'
+#' @return A character vector of repaired TSV lines, suitable for re-parsing
+#'   with \code{readr::read_tsv()}.
+#'
+#' @details
+#' This function is intentionally conservative: it only joins lines when there
+#' is strong evidence that a newline occurred inside a text field. It does not
+#' attempt to validate semantic correctness of repaired records.
+#'
+#' @keywords internal
+#' @noRd
+repair_ffiec_tsv_lines <- function(lines, expected_cols, tolerance = 10L) {
+  stopifnot(
+    is.numeric(expected_cols), length(expected_cols) == 1L, expected_cols >= 2,
+    is.numeric(tolerance), length(tolerance) == 1L, tolerance >= 0
+  )
+
+  # tabs + 1
+  n_fields <- function(x) 1L + stringr::str_count(x, "\t")
+
+  # Keep non-empty lines
+  lines <- lines[nzchar(lines)]
+
+  if (length(lines) == 0L) return(character(0))
+
+  is_row_start <- grepl("^\\d+\\t", lines)
+
+  # Field counts among row-start candidates
+  row_counts <- n_fields(lines[is_row_start])
+
+  # Derive a robust "typical minimum" for real rows:
+  # use a low quantile of row-start counts (so trailing-empty omissions don't hurt),
+  # then subtract tolerance, and apply a floor to avoid catching "1540\t\tExplanation..."
+  if (length(row_counts) == 0L) {
+    # fallback: just use expected_cols - tolerance, but keep it sane
+    min_fields_new_row <- max(3L, as.integer(expected_cols) - as.integer(tolerance))
+  } else {
+    q05 <- as.integer(stats::quantile(row_counts, probs = 0.05, names = FALSE, type = 7))
+    min_fields_new_row <- max(3L, q05 - as.integer(tolerance))
+  }
 
   out <- character(0)
+
   for (ln in lines) {
-    if (grepl("^\\d+\\t", ln) || length(out) == 0) {
+    if (length(out) == 0L) {
+      out <- c(out, ln)
+      next
+    }
+
+    looks_like_row_start <- grepl("^\\d+\\t", ln)
+    fields <- n_fields(ln)
+
+    if (looks_like_row_start && fields >= min_fields_new_row) {
       out <- c(out, ln)
     } else {
-      # continuation of previous record (embedded newline in TEXT field)
       out[length(out)] <- paste0(out[length(out)], " ", ln)
     }
   }
+
   out
 }
 
@@ -45,13 +127,37 @@ repair_ffiec_tsv_lines <- function(lines) {
 read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
   raw_cols <- get_header_from_zip_tsv(zipfile, inner_file)
   cols <- clean_cols(raw_cols)
+
   ffiec_col_overrides <- default_ffiec_col_overrides()
-  colspec <- make_colspec(cols, schema, xbrl_to_readr,
-                          ffiec_col_overrides = ffiec_col_overrides)
+  colspec <- make_colspec(
+    cols, schema, xbrl_to_readr,
+    ffiec_col_overrides = ffiec_col_overrides
+  )
+
+  expected_cols <- length(cols)
 
   con <- unz(zipfile, inner_file)
+  on.exit(try(close(con), silent = TRUE), add = TRUE)
+
   lines <- readLines(con, warn = FALSE)
-  lines2 <- repair_ffiec_tsv_lines(lines)
+
+  if (length(lines) == 0L) {
+    return(tibble::tibble())
+  }
+
+  # Keep header + (typically) description row intact; only repair *data* lines
+  if (length(lines) <= 2L) {
+    lines2 <- lines
+  } else {
+    head2 <- lines[1:2]
+    data_lines <- lines[-c(1L, 2L)]
+    data_lines <- repair_ffiec_tsv_lines(
+      data_lines,
+      expected_cols = expected_cols,
+      tolerance = 10L
+    )
+    lines2 <- c(head2, data_lines)
+  }
 
   tmp <- tempfile(fileext = ".tsv")
   writeLines(lines2, tmp, useBytes = TRUE)
@@ -66,16 +172,29 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     show_col_types = FALSE
   )
 
-  if (getOption("ffiec.pq.debug", FALSE)) {
+  if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
     probs <- readr::problems(df)
     if (nrow(probs) > 0) {
       message("Parsing issues in ", inner_file)
+      message("Repaired TSV written to: ", tmp)
       print(probs)
+
+      # Optional: print a small excerpt around the first bad row
+      r0 <- probs$row[[1]]
+      lo <- max(1L, r0 - 2L)
+      hi <- min(length(lines2), r0 + 2L)
+      message("Excerpt around first problem row (in repaired file):")
+      print(lines2[lo:hi])
+    } else {
+      # Optional: clean up temp file if no issues and debugging is on
+      # unlink(tmp)
     }
+  } else {
+    # Optional: if you don't want to litter temp files in normal runs
+    # unlink(tmp)
   }
 
   df
-
 }
 
 #' Create a readr column specification for FFIEC schedule TSVs
