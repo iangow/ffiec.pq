@@ -383,6 +383,8 @@ make_colspec <- function(cols, schema, xbrl_to_readr, ffiec_col_overrides = char
 #' @param inner_file Internal file path inside the zip.
 #'
 #' @return A tibble containing the parsed file.
+#' @keywords internal
+#' @noRd
 read_dor_from_zip <- function(zipfile, inner_file) {
 
   safe_close <- function(con) {
