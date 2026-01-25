@@ -2,19 +2,23 @@
 % Please edit documentation in R/ffiec_manifest.R
 \name{list_ffiec_zips}
 \alias{list_ffiec_zips}
-\title{List FFIEC bulk zip files in a schema directory}
+\title{List FFIEC bulk zip files}
 \usage{
 list_ffiec_zips(raw_dir = NULL, schema = "ffiec")
 }
 \arguments{
-\item{raw_dir}{Directory containing FFIEC bulk zip files. If \code{NULL},
-uses \code{RAW_DATA_DIR} and \code{schema}.}
+\item{raw_dir}{Directory containing FFIEC bulk zip files. If `NULL`, uses
+`RAW_DATA_DIR` and `schema`.}
 
-\item{schema}{Subdirectory name under \code{RAW_DATA_DIR}.
-Defaults to \code{"ffiec"}.}
+\item{schema}{Subdirectory name under `RAW_DATA_DIR`. Defaults to `"ffiec"`.}
 }
 \value{
-A tibble with columns \code{zipfile}, \code{date}, and \code{date_raw}.
+A tibble with columns:
+\describe{
+  \item{zipfile}{Full path to the bulk zip file.}
+  \item{date}{Report date as a \code{Date}.}
+  \item{date_raw}{Report date in YYYYMMDD form.}
+}
 }
 \description{
 Scans a directory for FFIEC "Call Bulk All Schedules" zip files and returns
@@ -22,6 +26,7 @@ a tibble with the zipfile paths and the report date parsed from the filename.
 }
 \details{
 Directory resolution:
-- If \code{raw_dir} is provided, it is used directly.
-- Otherwise, \code{RAW_DATA_DIR} and \code{schema} are used.
+- If `raw_dir` is supplied, it is used as-is.
+- Otherwise, this function uses `RAW_DATA_DIR` and `schema` to form
+  `file.path(RAW_DATA_DIR, schema)`.
 }

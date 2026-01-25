@@ -202,7 +202,8 @@ process_zip_schedules <- function(zipfile, inside_files, schema, xbrl_to_readr, 
 #' @param out_name Output filename to use.
 #'
 #' @return The full output path to the extracted file.
-#' @export
+#' @keywords internal
+#' @noRd
 extract_one_inner_file <- function(zipfile, inner_file, out_dir, out_name) {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -309,7 +310,8 @@ resolve_out_dir <- function(out_dir, schema) {
 #'   \code{DATA_DIR} and \code{schema}.
 #' @param schema Subdirectory name under \code{DATA_DIR} (and \code{RAW_DATA_DIR} in
 #'   the multi-zip function). Defaults to \code{"ffiec"}.
-#' @export
+#' @keywords internal
+#' @noRd
 process_ffiec_zip <- function(zipfile, out_dir = NULL, schema = "ffiec") {
   out_dir <- resolve_out_dir(out_dir, schema)
   if (is.null(out_dir)) stop("Provide `out_dir` or set DATA_DIR.")
@@ -353,7 +355,8 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL, schema = "ffiec") {
 #'   Defaults to \code{"ffiec"}.
 #'
 #' @return A tibble describing written Parquet files.
-#' @export
+#' @keywords internal
+#' @noRd
 process_ffiec_zips <- function(raw_dir = NULL, zipfiles = NULL, out_dir = NULL, schema = "ffiec") {
   out_dir <- resolve_out_dir(out_dir, schema)
   if (is.null(out_dir)) stop("Provide `out_dir` or set DATA_DIR.")

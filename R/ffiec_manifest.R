@@ -1,27 +1,29 @@
-#' List FFIEC bulk zip files in a schema directory
+#' List FFIEC bulk zip files
 #'
 #' Scans a directory for FFIEC "Call Bulk All Schedules" zip files and returns
 #' a tibble with the zipfile paths and the report date parsed from the filename.
 #'
 #' Directory resolution:
-#' - If \code{raw_dir} is provided, it is used directly.
-#' - Otherwise, \code{RAW_DATA_DIR} and \code{schema} are used.
+#' - If `raw_dir` is supplied, it is used as-is.
+#' - Otherwise, this function uses `RAW_DATA_DIR` and `schema` to form
+#'   `file.path(RAW_DATA_DIR, schema)`.
 #'
-#' @param raw_dir Directory containing FFIEC bulk zip files. If \code{NULL},
-#'   uses \code{RAW_DATA_DIR} and \code{schema}.
-#' @param schema Subdirectory name under \code{RAW_DATA_DIR}.
-#'   Defaults to \code{"ffiec"}.
+#' @param raw_dir Directory containing FFIEC bulk zip files. If `NULL`, uses
+#'   `RAW_DATA_DIR` and `schema`.
+#' @param schema Subdirectory name under `RAW_DATA_DIR`. Defaults to `"ffiec"`.
 #'
-#' @return A tibble with columns \code{zipfile}, \code{date}, and \code{date_raw}.
+#' @return A tibble with columns:
+#' \describe{
+#'   \item{zipfile}{Full path to the bulk zip file.}
+#'   \item{date}{Report date as a \code{Date}.}
+#'   \item{date_raw}{Report date in YYYYMMDD form.}
+#' }
 #' @export
 list_ffiec_zips <- function(raw_dir = NULL, schema = "ffiec") {
   raw_dir <- resolve_raw_dir(raw_dir, schema)
 
-  if (is.null(raw_dir)) {
-    stop(
-      "Provide `raw_dir` or set RAW_DATA_DIR (optionally with `schema`).",
-      call. = FALSE
-    )
+  if (is.null(raw_dir) || !nzchar(raw_dir)) {
+    stop("Provide `raw_dir` or set RAW_DATA_DIR.", call. = FALSE)
   }
 
   files <- list.files(
@@ -30,37 +32,42 @@ list_ffiec_zips <- function(raw_dir = NULL, schema = "ffiec") {
     full.names = TRUE
   )
 
-  if (length(files) == 0) {
-    stop(
-      "No FFIEC bulk zip files found in:\n  ",
-      raw_dir,
-      call. = FALSE
-    )
+  if (length(files) == 0L) {
+    return(tibble::tibble(
+      zipfile = character(0),
+      date = as.Date(character(0)),
+      date_raw = character(0)
+    ))
   }
 
   mmddyyyy <- stringr::str_extract(basename(files), "\\d{8}")
+  bad <- is.na(mmddyyyy)
 
-  if (anyNA(mmddyyyy)) {
+  if (any(bad)) {
     stop(
-      "Could not parse MMDDYYYY date from filenames:\n",
-      paste0("  - ", basename(files[is.na(mmddyyyy)]), collapse = "\n"),
+      "Could not parse an 8-digit MMDDYYYY date from these filenames:\n",
+      paste0("  - ", basename(files[bad]), collapse = "\n"),
+      "\nExpected filenames like: 'FFIEC CDR Call Bulk All Schedules 12312022.zip'",
       call. = FALSE
     )
   }
 
   date <- as.Date(mmddyyyy, format = "%m%d%Y")
+  bad_date <- is.na(date)
 
-  if (anyNA(date)) {
+  if (any(bad_date)) {
     stop(
-      "Parsed date tokens but as.Date() failed for:\n",
-      paste0("  - ", basename(files[is.na(date)]), collapse = "\n"),
+      "Parsed date token(s) but as.Date() returned NA for:\n",
+      paste0("  - ", basename(files[bad_date]), collapse = "\n"),
+      "\nExtracted tokens:\n",
+      paste0("  - ", mmddyyyy[bad_date], collapse = "\n"),
       call. = FALSE
     )
   }
 
   tibble::tibble(
     zipfile = normalizePath(files, mustWork = FALSE),
-    date    = date
+    date = date
   ) |>
     dplyr::mutate(date_raw = format(.data$date, "%Y%m%d")) |>
     dplyr::arrange(.data$date, .data$zipfile)

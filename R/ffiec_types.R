@@ -3,7 +3,8 @@
 #' Returns the FFIEC XBRL schema bundled with the package.
 #'
 #' @return A tibble containing schema metadata.
-#' @export
+#' @keywords internal
+#' @noRd
 get_ffiec_schema <- function() {
   utils::data("ffiec_schema", package = "ffiec.pq", envir = environment())
   ffiec_schema
