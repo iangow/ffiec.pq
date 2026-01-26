@@ -28,7 +28,7 @@ ffiec_list_zips <- function(raw_dir = NULL, schema = "ffiec") {
 
   files <- list.files(
     raw_dir,
-    pattern = "^FFIEC CDR Call Bulk All Schedules",
+    pattern = "^FFIEC CDR Call Bulk All Schedules.*\\.zip$",
     full.names = TRUE
   )
 
