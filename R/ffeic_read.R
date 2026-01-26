@@ -389,6 +389,30 @@ apply_ffiec_date_overrides <- function(df, date_cols, zipfile, inner_file, debug
   list(df = df2, repairs = character(0))
 }
 
+#' Treat zero-valued identifier fields as missing
+#'
+#' Many FFIEC identifier fields (e.g., FDIC certificate number, OCC charter
+#' number, OTS docket number, routing numbers) use the literal value `"0"` to
+#' indicate a missing or inapplicable identifier. This helper normalizes those
+#' fields by converting `"0"` and empty strings to `NA`, while leaving all other
+#' values unchanged.
+#'
+#' This function is intentionally conservative: it does **not** coerce types
+#' and is designed to be used inside `dplyr::mutate(across(...))` pipelines.
+#'
+#' @param x A character vector containing identifier values.
+#'
+#' @return A character vector with `"0"` and `""` replaced by `NA`.
+#'
+#' @keywords internal
+#' @noRd
+parse_id_zero_na <- function(x) {
+  x <- trimws(x)
+  x[x %in% c("", "0")] <- NA_character_
+  x
+}
+
+
 #' Parse FFIEC YYYYMMDD dates silently
 #'
 #' Returns a Date vector. Invalid tokens become NA.

@@ -300,7 +300,19 @@ process_zip_dor <- function(zipfile, inside_files, out_dir) {
     kind <- dor_kind(inner_file)
 
     df <- read_dor_from_zip(zipfile, inner_file) |>
-      dplyr::mutate(date = date)
+      dplyr::mutate(
+        date = date,
+        dplyr::across(
+          dplyr::any_of(c(
+            "financial_institution_zip_code",
+            "fdic_certificate_number",
+            "occ_charter_number",
+            "ots_docket_number",
+            "primary_aba_routing_number"
+          )),
+          parse_id_zero_na
+        )
+      )
 
     out_path <- file.path(
       out_dir,
