@@ -88,6 +88,11 @@ repair_ffiec_tsv_lines <- function(lines, expected_cols, tolerance = 10L) {
 #' @noRd
 read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
 
+  # ---- helper: empty tibble with correct columns ----
+  empty_tbl <- function(cols) {
+    tibble::as_tibble(stats::setNames(replicate(length(cols), logical(0), simplify = FALSE), cols))
+  }
+
   # ---- helper: collapse overflow fields into last column (replace extra tabs) ----
   collapse_overflow_into_last <- function(lines, expected_cols, sep = " ") {
     stopifnot(is.numeric(expected_cols), length(expected_cols) == 1L, expected_cols >= 1L)
@@ -103,7 +108,7 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
       if (length(parts) <= expected_cols) return(ln)
       head <- if (expected_cols > 1L) parts[seq_len(expected_cols - 1L)] else character(0)
       tail <- parts[expected_cols:length(parts)]
-      last <- paste(tail, collapse = sep)     # <-- critical: NOT "\t"
+      last <- paste(tail, collapse = sep)  # NOT "\t"
       paste(c(head, last), collapse = "\t")
     }
 
@@ -129,64 +134,90 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     ffiec_col_overrides = ffiec_col_overrides
   )
 
-  # ---- read raw lines ----
-  con <- unz(zipfile, inner_file)
-  on.exit(try(close(con), silent = TRUE), add = TRUE)
+  # ---- pass 1: fast path (no repairs) ----
+  fast_try <- try({
+    con <- unz(zipfile, inner_file)
+    on.exit(try(close(con), silent = TRUE), add = TRUE)
 
-  lines <- readLines(con, warn = FALSE)
-
-  if (length(lines) == 0L) {
-    return(tibble::as_tibble(stats::setNames(replicate(expected_cols, logical(0), simplify = FALSE), cols)))
-  }
-
-  # Keep non-empty lines (your repair function assumes this)
-  lines <- lines[nzchar(lines)]
-  if (length(lines) == 0L) {
-    return(tibble::as_tibble(stats::setNames(replicate(expected_cols, logical(0), simplify = FALSE), cols)))
-  }
-
-  # Data rows begin after the first two lines (header + "type" row)
-  header_lines <- if (length(lines) >= 2L) lines[1:2] else lines
-  data_lines   <- if (length(lines) > 2L)  lines[-(1:2)] else character(0)
-
-  # ---- detect + repair embedded newlines (only if needed) ----
-  needs_repair <- FALSE
-  if (length(data_lines) > 0L) {
-    field_counts <- 1L + stringr::str_count(data_lines, "\t")
-    needs_repair <- any(field_counts < expected_cols, na.rm = TRUE)
-  }
-
-  data_lines2 <- data_lines
-  if (needs_repair && length(data_lines) > 0L) {
-    data_lines2 <- repair_ffiec_tsv_lines(
-      data_lines,
-      expected_cols = expected_cols,
-      tolerance = 10L
+    df1 <- readr::read_tsv(
+      con,
+      skip = 2,
+      quote = "",
+      col_names = cols,
+      na = c("", "NA", "CONF"),
+      col_types = colspec,
+      progress = FALSE,
+      show_col_types = FALSE
     )
+
+    df1
+  }, silent = TRUE)
+
+  if (!inherits(fast_try, "try-error")) {
+    df1 <- fast_try
+
+    # Apply date parsing overrides (cheap; keep it on fast path)
+    date_cols <- names(ffiec_col_overrides)[ffiec_col_overrides == "D"]
+    date_cols <- intersect(date_cols, names(df1))
+    if (length(date_cols)) {
+      df1 <- df1 |>
+        dplyr::mutate(dplyr::across(dplyr::all_of(date_cols), parse_ffiec_yyyymmdd))
+    }
+
+    # Only fall back if there are parsing problems
+    probs1 <- readr::problems(df1)
+    if (nrow(probs1) == 0L) return(df1)
+
     if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
-      message("Applied line repair for: ", inner_file)
+      message("Parsing issues in ", inner_file, " (fast path). Falling back to repairs.")
+      print(probs1)
+    }
+  } else {
+    if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
+      message("readr error in fast path for ", inner_file, ". Falling back to repairs.")
+      message(conditionMessage(attr(fast_try, "condition")))
     }
   }
 
-  # ---- trim extra trailing tabs that create > expected_cols fields ----
-  if (length(data_lines2) > 0L) {
-    data_lines2 <- trim_extra_trailing_tabs(data_lines2, expected_cols = expected_cols)
+  # ---- pass 2: slow path (read lines → repair → parse) ----
+  con2 <- unz(zipfile, inner_file)
+  on.exit(try(close(con2), silent = TRUE), add = TRUE)
+
+  lines <- readLines(con2, warn = FALSE)
+
+  if (length(lines) == 0L) return(empty_tbl(cols))
+
+  lines <- lines[nzchar(lines)]
+  if (length(lines) == 0L) return(empty_tbl(cols))
+
+  header_lines <- if (length(lines) >= 2L) lines[1:2] else lines
+  data_lines   <- if (length(lines) > 2L)  lines[-(1:2)] else character(0)
+
+  # 1) embedded newlines
+  if (length(data_lines) > 0L) {
+    data_lines <- repair_ffiec_tsv_lines(data_lines, expected_cols = expected_cols, tolerance = 10L)
+    if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
+      message("Applied embedded-newline repair for: ", inner_file)
+    }
   }
 
-  # ---- NEW: collapse overflow tabs into the last column (only when last col is character) ----
-  if (length(data_lines2) > 0L) {
-    last_nm <- cols[[length(cols)]]
+  # 2) extra trailing tabs
+  if (length(data_lines) > 0L) {
+    data_lines <- trim_extra_trailing_tabs(data_lines, expected_cols = expected_cols)
+  }
 
-    # try to detect whether last column is character based on the colspec produced by make_colspec()
+  # 3) overflow tabs into last text column (only if last col is character)
+  if (length(data_lines) > 0L) {
+    last_nm <- cols[[length(cols)]]
     last_is_char <- FALSE
     if (!is.null(colspec$cols) && !is.null(colspec$cols[[last_nm]])) {
       last_is_char <- inherits(colspec$cols[[last_nm]], "collector_character")
     }
 
     if (last_is_char) {
-      before_any <- any((1L + stringr::str_count(data_lines2, "\t")) > expected_cols)
-      if (before_any) {
-        data_lines2 <- collapse_overflow_into_last(data_lines2, expected_cols = expected_cols, sep = " ")
+      n_fields <- 1L + stringr::str_count(data_lines, "\t")
+      if (any(n_fields > expected_cols, na.rm = TRUE)) {
+        data_lines <- collapse_overflow_into_last(data_lines, expected_cols = expected_cols, sep = " ")
         if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
           message("Collapsed overflow tabs into last column for: ", inner_file)
         }
@@ -194,16 +225,15 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     }
   }
 
-  # ---- write a clean temp TSV and parse with readr ----
   tmp <- tempfile(fileext = ".tsv")
   on.exit(try(unlink(tmp), silent = TRUE), add = TRUE)
 
-  writeLines(c(header_lines, data_lines2), tmp, useBytes = TRUE)
+  writeLines(c(header_lines, data_lines), tmp, useBytes = TRUE)
 
-  df <- readr::read_tsv(
+  df2 <- readr::read_tsv(
     tmp,
     skip = 2,
-    quote="",
+    quote = "",
     col_names = cols,
     na = c("", "NA", "CONF"),
     col_types = colspec,
@@ -211,34 +241,29 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     show_col_types = FALSE
   )
 
+  # date overrides
   date_cols <- names(ffiec_col_overrides)[ffiec_col_overrides == "D"]
-  date_cols <- intersect(date_cols, names(df))
-
+  date_cols <- intersect(date_cols, names(df2))
   if (length(date_cols)) {
-    df <- df |>
-      dplyr::mutate(
-        dplyr::across(
-          dplyr::all_of(date_cols),
-          parse_ffiec_yyyymmdd
-        )
-      )
+    df2 <- df2 |>
+      dplyr::mutate(dplyr::across(dplyr::all_of(date_cols), parse_ffiec_yyyymmdd))
   }
 
-  # ---- debug: report parsing problems ----
+  # debug on slow path
   if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
-    probs <- readr::problems(df)
-    if (nrow(probs) > 0) {
-      message("Parsing issues in ", inner_file)
-      print(probs)
-      r0 <- probs$row[[1]]
+    probs2 <- readr::problems(df2)
+    if (nrow(probs2) > 0) {
+      message("Parsing issues in ", inner_file, " (after repairs).")
+      print(probs2)
+      r0 <- probs2$row[[1]]
       lo <- max(1L, r0 - 3L)
-      hi <- min(length(data_lines2), r0 + 3L)
-      message("Nearby repaired data lines (post-repair, post-trim):")
-      print(data_lines2[lo:hi])
+      hi <- min(length(data_lines), r0 + 3L)
+      message("Nearby repaired data lines (slow path):")
+      print(data_lines[lo:hi])
     }
   }
 
-  df
+  df2
 }
 
 parse_ffiec_yyyymmdd <- function(x) {
