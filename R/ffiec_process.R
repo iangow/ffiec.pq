@@ -47,12 +47,39 @@ combine_call_parts <- function(dfs, key = "IDRSSD") {
 #' @keywords internal
 #' @noRd
 read_schedule_all_parts <- function(zipfile, files_tbl, schema, xbrl_to_readr) {
-  dfs <- purrr::map(files_tbl$file, ~ read_call_from_zip(zipfile, .x, schema, xbrl_to_readr))
+  dfs <- purrr::map(
+    files_tbl$file,
+    ~ read_call_from_zip(zipfile, .x, schema, xbrl_to_readr)
+  )
+
+  repairs <- ffiec_union_repairs(dfs)
 
   df <- combine_call_parts(dfs, key = "IDRSSD") |>
     dplyr::mutate(date = files_tbl$date[[1]])
 
-  fix_pure_percent_cols(df, schema)
+  df <- fix_pure_percent_cols(df, schema)
+
+  ffiec_set_repairs(df, repairs)
+}
+
+#' @keywords internal
+#' @noRd
+ffiec_get_repairs <- function(x) {
+  r <- attr(x, "ffiec_repairs", exact = TRUE)
+  if (is.null(r)) character(0) else unique(as.character(r))
+}
+
+#' @keywords internal
+#' @noRd
+ffiec_union_repairs <- function(xs) {
+  unique(unlist(lapply(xs, ffiec_get_repairs), use.names = FALSE))
+}
+
+#' @keywords internal
+#' @noRd
+ffiec_set_repairs <- function(x, repairs) {
+  attr(x, "ffiec_repairs") <- unique(as.character(repairs))
+  x
 }
 
 # ---- INTERNAL: schedules ----
@@ -122,7 +149,7 @@ process_zip_schedules <- function(zipfile, inside_files, schema, xbrl_to_readr, 
 
   groups <- dplyr::group_split(targets, .data$schedule, .data$date_raw, .keep = TRUE)
 
-  purrr::map_dfr(groups, function(g) {
+  results <- purrr::map_dfr(groups, function(g) {
     schedule <- g$schedule[[1]]
     date_raw <- g$date_raw[[1]]
     date     <- g$date[[1]]
@@ -172,20 +199,32 @@ process_zip_schedules <- function(zipfile, inside_files, schema, xbrl_to_readr, 
       g <- dplyr::arrange(g, .data$part)
     }
 
-    # Read + combine parts
+    # Read + combine parts (single group g)
     df <- read_schedule_all_parts(zipfile, g, schema, xbrl_to_readr)
+
+    repairs <- attr(df, "ffiec_repairs", exact = TRUE)
+    if (is.null(repairs)) repairs <- character(0)
 
     out_path <- file.path(out_dir, sprintf("sched_%s_%s.parquet", schedule, date_raw))
     arrow::write_parquet(df, out_path)
 
     tibble::tibble(
-      schedule = schedule,
-      date_raw = date_raw,
-      date     = date,
-      parquet  = out_path,
-      n_parts  = n_parts
+      type        = "schedule",
+      kind        = schedule,                 # <-- merge schedule/kind
+      date_raw    = date_raw,
+      date        = date,
+      parquet     = basename(out_path),
+      zipfile     = basename(zipfile),
+      n_parts     = n_parts,
+      repairs     = list(repairs),
+      inner_files = list(basename(g$file))    # <-- list-column (1+ files)
     )
   })
+
+  list(
+    out_dir = out_dir,
+    files   = results
+  )
 }
 
 # ---- DOR/POR helpers ----
@@ -270,11 +309,15 @@ process_zip_dor <- function(zipfile, inside_files, out_dir) {
     arrow::write_parquet(df, out_path)
 
     tibble::tibble(
-      kind = kind,
-      date = date,
-      date_raw = date_raw,
-      inner_file = basename(inner_file),
-      parquet = out_path
+      type        = "dor",
+      kind        = kind,
+      date        = date,
+      date_raw    = date_raw,
+      parquet     = basename(out_path),
+      zipfile     = basename(zipfile),
+      n_parts     = 1,
+      repairs     = list(character(0)),
+      inner_files = list(basename(inner_file))
     )
   })
 }
@@ -314,71 +357,52 @@ resolve_out_dir <- function(out_dir, schema) {
 #' @noRd
 process_ffiec_zip <- function(zipfile, out_dir = NULL, schema = "ffiec") {
   out_dir <- resolve_out_dir(out_dir, schema)
-  if (is.null(out_dir)) stop("Provide `out_dir` or set DATA_DIR.")
+  if (is.null(out_dir)) stop("Provide `out_dir` or set DATA_DIR.", call. = FALSE)
 
   out_dir <- normalizePath(out_dir, mustWork = FALSE)
 
-  schema_tbl <- get_ffiec_schema()
+  schema_tbl   <- get_ffiec_schema()
   xbrl_to_readr <- default_xbrl_to_readr()
 
   inside <- get_cr_files(zipfile)
 
-  sched <- process_zip_schedules(
+  # ---- schedules (returns list(out_dir=..., files=...)) ----
+  sched_res <- process_zip_schedules(
     zipfile       = zipfile,
     inside_files  = inside,
     schema        = schema_tbl,
     xbrl_to_readr = xbrl_to_readr,
     out_dir       = out_dir
-  ) |>
-    dplyr::mutate(type = "schedule", kind = NA_character_, zipfile = basename(zipfile))
+  )
 
+  sched <- sched_res$files |>
+    dplyr::mutate(
+      zipfile     = basename(zipfile),
+      repairs     = dplyr::coalesce(.data$repairs, list(character(0))),
+      inner_files = dplyr::coalesce(.data$inner_files, list(character(0)))
+    )
+
+  # ---- DOR/POR (returns tibble) ----
   dor <- process_zip_dor(
     zipfile      = zipfile,
     inside_files = inside,
     out_dir      = out_dir
   ) |>
-    dplyr::mutate(type = "dor", schedule = NA_character_, n_parts = NA_integer_, zipfile = basename(zipfile))
+    dplyr::mutate(
+      zipfile     = basename(zipfile),
+      repairs     = dplyr::coalesce(.data$repairs, list(character(0))),
+      inner_files = dplyr::coalesce(.data$inner_files, list(character(0)))
+    )
 
-  dplyr::bind_rows(sched, dor) |>
-    dplyr::relocate(.data$type, .data$schedule, .data$kind, .data$date, .data$date_raw, .data$parquet, .data$zipfile) |>
-    dplyr::arrange(.data$date, .data$type, .data$schedule, .data$kind)
-}
+  out <- dplyr::bind_rows(sched, dor) |>
+    dplyr::relocate(
+      .data$type, .data$kind, .data$date, .data$date_raw,
+      .data$parquet, .data$zipfile, .data$n_parts, .data$repairs, .data$inner_files
+    ) |>
+    dplyr::arrange(.data$date, .data$type, .data$kind)
 
-#' Process FFIEC bulk zip files
-#'
-#' @param raw_dir Directory containing bulk zip files. If \code{NULL}, uses
-#'   \code{RAW_DATA_DIR} and \code{schema}.
-#' @param zipfiles Optional vector of zip file paths.
-#' @param out_dir Output directory for Parquet files. If \code{NULL}, uses
-#'   \code{DATA_DIR} and \code{schema}.
-#' @param schema Subdirectory name under \code{RAW_DATA_DIR} and \code{DATA_DIR}.
-#'   Defaults to \code{"ffiec"}.
-#'
-#' @return A tibble describing written Parquet files.
-#' @keywords internal
-#' @noRd
-process_ffiec_zips <- function(raw_dir = NULL, zipfiles = NULL, out_dir = NULL, schema = "ffiec") {
-  out_dir <- resolve_out_dir(out_dir, schema)
-  if (is.null(out_dir)) stop("Provide `out_dir` or set DATA_DIR.")
-  out_dir <- normalizePath(out_dir, mustWork = FALSE)
-
-  if (is.null(zipfiles)) {
-    raw_dir <- resolve_raw_dir(raw_dir, schema)
-    if (is.null(raw_dir)) {
-      stop("Provide `zipfiles`, or provide `raw_dir`, or set RAW_DATA_DIR.")
-    }
-
-    zipfiles <- ffiec_list_zips(raw_dir)$zipfile
-  }
-
-  zipfiles <- normalizePath(zipfiles, mustWork = FALSE)
-
-  purrr::map_dfr(
-    zipfiles,
-    process_ffiec_zip,
-    out_dir = out_dir,
-    schema = schema
-  )
+  attr(out, "out_dir") <- out_dir
+  out
 }
 
 #' Process FFIEC call report bulk data
@@ -395,26 +419,29 @@ process_ffiec_zips <- function(raw_dir = NULL, zipfiles = NULL, out_dir = NULL, 
 #'
 #' @return A tibble describing written Parquet files.
 #' @export
-ffiec_process <- function(zipfile = NULL,
-                          zipfiles = NULL,
-                          raw_dir = NULL,
-                          out_dir = NULL,
-                          schema = "ffiec") {
+ffiec_process <- function(zipfiles = NULL, raw_dir = NULL, out_dir = NULL, schema = "ffiec") {
+  out_dir <- resolve_out_dir(out_dir, schema)
+  if (is.null(out_dir)) stop("Provide `out_dir` or set DATA_DIR.", call. = FALSE)
+  out_dir <- normalizePath(out_dir, mustWork = FALSE)
 
-  if (!is.null(zipfile)) {
-    return(
-      process_ffiec_zip(
-        zipfile = zipfile,
-        out_dir = out_dir,
-        schema  = schema
-      )
-    )
+  if (is.null(zipfiles)) {
+    raw_dir <- resolve_raw_dir(raw_dir, schema)
+    if (is.null(raw_dir)) {
+      stop("Provide `zipfiles`, or provide `raw_dir`, or set RAW_DATA_DIR.", call. = FALSE)
+    }
+
+    zipfiles <- ffiec_list_zips(raw_dir = raw_dir)$zipfile
   }
 
-  process_ffiec_zips(
-    raw_dir  = raw_dir,
-    zipfiles = zipfiles,
-    out_dir  = out_dir,
-    schema   = schema
+  zipfiles <- normalizePath(zipfiles, mustWork = TRUE)
+
+  out <- purrr::map_dfr(
+    zipfiles,
+    process_ffiec_zip,
+    out_dir = out_dir,
+    schema = schema
   )
+
+  attr(out, "out_dir") <- out_dir
+  out
 }

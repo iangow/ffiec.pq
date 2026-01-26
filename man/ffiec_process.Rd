@@ -5,7 +5,6 @@
 \title{Process FFIEC call report bulk data}
 \usage{
 ffiec_process(
-  zipfile = NULL,
   zipfiles = NULL,
   raw_dir = NULL,
   out_dir = NULL,
@@ -13,8 +12,6 @@ ffiec_process(
 )
 }
 \arguments{
-\item{zipfile}{Path to a single bulk FFIEC zip file.}
-
 \item{zipfiles}{Optional vector of bulk zip file paths.}
 
 \item{raw_dir}{Directory containing bulk zip files.}
@@ -23,6 +20,8 @@ ffiec_process(
 
 \item{schema}{Subdirectory name under \code{RAW_DATA_DIR} and \code{DATA_DIR}.
 Defaults to \code{"ffiec"}.}
+
+\item{zipfile}{Path to a single bulk FFIEC zip file.}
 }
 \value{
 A tibble describing written Parquet files.

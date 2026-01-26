@@ -116,6 +116,18 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     lines
   }
 
+  # ---- helper: attach repairs attribute consistently ----
+  attach_repairs <- function(df, repairs) {
+    repairs <- as.character(repairs)
+    repairs <- repairs[!is.na(repairs) & nzchar(repairs)]
+    attr(df, "ffiec_repairs") <- unique(repairs)
+    df
+  }
+
+  # track repairs across whichever path we end up using
+  repairs_applied <- character(0)
+  debug <- isTRUE(getOption("ffiec.pq.debug", FALSE))
+
   # ---- header ----
   raw_cols <- get_header_from_zip_tsv(zipfile, inner_file)
   cols <- clean_cols(raw_cols)
@@ -161,9 +173,8 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     df1
   }, silent = TRUE)
 
-  # Optional: surface the warnings in debug mode (you can keep/remove this block)
-  if (FALSE) {
-  #if (isTRUE(getOption("ffiec.pq.debug", FALSE)) && length(fast_warnings) > 0L) {
+  # Optional: surface fast warnings in debug mode
+  if (debug && length(fast_warnings) > 0L) {
     message("Fast-path warnings in ", inner_file, ":")
     for (msg in unique(fast_warnings)) message("  - ", msg)
   }
@@ -171,54 +182,83 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
   if (!inherits(fast_try, "try-error")) {
     df1 <- fast_try
 
-    # Apply date parsing overrides (cheap; keep it on fast path)
-    date_cols <- names(ffiec_col_overrides)[ffiec_col_overrides == "D"]
-    date_cols <- intersect(date_cols, names(df1))
-    if (length(date_cols)) {
-      df1 <- df1 |>
-        dplyr::mutate(dplyr::across(dplyr::all_of(date_cols), parse_ffiec_yyyymmdd))
+    # IMPORTANT: capture parse problems BEFORE any dplyr mutate/across
+    probs1 <- readr::problems(df1)
+
+    # Conservative trigger: any fast-path warning => fall back
+    warn_trigger <- length(fast_warnings) > 0L
+
+    # Problems trigger: actual recorded parsing problems
+    prob_trigger <- nrow(probs1) > 0L
+
+    if (!warn_trigger && !prob_trigger) {
+      # Apply date parsing overrides (cheap; keep it on fast path)
+      date_cols <- names(ffiec_col_overrides)[ffiec_col_overrides == "D"]
+
+      res_dates <- apply_ffiec_date_overrides(
+        df = df1,
+        date_cols = date_cols,
+        zipfile = zipfile,
+        inner_file = inner_file,
+        debug = debug
+      )
+
+      df1 <- res_dates$df
+      repairs_applied <- union(repairs_applied, res_dates$repairs)
+
+      return(attach_repairs(df1, repairs_applied))
     }
 
-    # Only fall back if there are parsing problems
-    probs1 <- readr::problems(df1)
-    if (nrow(probs1) == 0L) return(df1)
-
-    if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
-      message("Parsing issues in ", inner_file, " (fast path). Falling back to repairs.")
-      print(probs1)
+    if (debug) {
+      message("Fast path flagged issues in ", inner_file, ". Falling back to repairs.")
+      if (warn_trigger) {
+        message("  Reason: fast-path warnings (", length(unique(fast_warnings)), ").")
+      }
+      if (prob_trigger) {
+        message("  Reason: readr problems (", nrow(probs1), ").")
+        print(probs1)
+      }
     }
   } else {
-    if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
+    if (debug) {
       message("readr error in fast path for ", inner_file, ". Falling back to repairs.")
       message(conditionMessage(attr(fast_try, "condition")))
     }
   }
 
   # ---- pass 2: slow path (read lines → repair → parse) ----
+  repairs_applied <- character(0)  # reset: only count actual repairs on slow path
+
   con2 <- unz(zipfile, inner_file)
   on.exit(try(close(con2), silent = TRUE), add = TRUE)
 
   lines <- readLines(con2, warn = FALSE)
 
-  if (length(lines) == 0L) return(empty_tbl(cols))
+  if (length(lines) == 0L) return(attach_repairs(empty_tbl(cols), repairs_applied))
 
   lines <- lines[nzchar(lines)]
-  if (length(lines) == 0L) return(empty_tbl(cols))
+  if (length(lines) == 0L) return(attach_repairs(empty_tbl(cols), repairs_applied))
 
   header_lines <- if (length(lines) >= 2L) lines[1:2] else lines
   data_lines   <- if (length(lines) > 2L)  lines[-(1:2)] else character(0)
 
   # 1) embedded newlines
   if (length(data_lines) > 0L) {
+    before <- data_lines
     data_lines <- repair_ffiec_tsv_lines(data_lines, expected_cols = expected_cols, tolerance = 10L)
-    if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
-      message("Applied embedded-newline repair for: ", inner_file)
+    if (!identical(data_lines, before)) {
+      repairs_applied <- c(repairs_applied, "embedded-newline")
+      if (debug) message("Applied embedded-newline repair for: ", inner_file)
     }
   }
 
   # 2) extra trailing tabs
   if (length(data_lines) > 0L) {
+    before <- data_lines
     data_lines <- trim_extra_trailing_tabs(data_lines, expected_cols = expected_cols)
+    if (!identical(data_lines, before)) {
+      repairs_applied <- c(repairs_applied, "trim-trailing-tabs")
+    }
   }
 
   # 3) overflow tabs into last text column (only if last col is character)
@@ -232,9 +272,11 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     if (last_is_char) {
       n_fields <- 1L + stringr::str_count(data_lines, "\t")
       if (any(n_fields > expected_cols, na.rm = TRUE)) {
+        before <- data_lines
         data_lines <- collapse_overflow_into_last(data_lines, expected_cols = expected_cols, sep = " ")
-        if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
-          message("Collapsed overflow tabs into last column for: ", inner_file)
+        if (!identical(data_lines, before)) {
+          repairs_applied <- c(repairs_applied, "overflow-tabs")
+          if (debug) message("Collapsed overflow tabs into last column for: ", inner_file)
         }
       }
     }
@@ -258,14 +300,20 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
 
   # date overrides
   date_cols <- names(ffiec_col_overrides)[ffiec_col_overrides == "D"]
-  date_cols <- intersect(date_cols, names(df2))
-  if (length(date_cols)) {
-    df2 <- df2 |>
-      dplyr::mutate(dplyr::across(dplyr::all_of(date_cols), parse_ffiec_yyyymmdd))
-  }
+
+  res_dates <- apply_ffiec_date_overrides(
+    df = df2,
+    date_cols = date_cols,
+    zipfile = zipfile,
+    inner_file = inner_file,
+    debug = debug
+  )
+
+  df2 <- res_dates$df
+  repairs_applied <- union(repairs_applied, res_dates$repairs)
 
   # debug on slow path
-  if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
+  if (debug) {
     probs2 <- readr::problems(df2)
     if (nrow(probs2) > 0) {
       message("Parsing issues in ", inner_file, " (after repairs).")
@@ -278,15 +326,99 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     }
   }
 
-  df2
+  attach_repairs(df2, repairs_applied)
 }
 
-parse_ffiec_yyyymmdd <- function(x) {
-  readr::parse_date(
-    x,
-    format = "%Y%m%d",
-    na = c("", "NA", "0", "00000000")
+#' Apply FFIEC date overrides, recording invalid-date repairs
+#'
+#' @return list(df=..., repairs=character())
+#' @keywords internal
+#' @noRd
+apply_ffiec_date_overrides <- function(df, date_cols, zipfile, inner_file, debug = FALSE) {
+  if (!length(date_cols)) return(list(df = df, repairs = character(0)))
+
+  date_cols <- intersect(date_cols, names(df))
+  if (!length(date_cols)) return(list(df = df, repairs = character(0)))
+
+  # We’ll collect problems per column
+  problems_by_col <- list()
+
+  # Do the coercion without warnings
+  df2 <- suppressWarnings({
+    df |>
+      dplyr::mutate(
+        dplyr::across(
+          dplyr::all_of(date_cols),
+          ~ {
+            parsed <- parse_ffiec_yyyymmdd_silent(.x)
+            probs  <- attr(parsed, "ffiec_date_problems")
+            if (is.data.frame(probs) && nrow(probs) > 0) {
+              problems_by_col[[dplyr::cur_column()]] <<- probs
+            }
+            parsed
+          }
+        )
+      )
+  })
+
+  # If any problems occurred, tag + optionally print details
+  if (length(problems_by_col) > 0) {
+    if (isTRUE(debug)) {
+      n_bad <- sum(vapply(problems_by_col, nrow, integer(1)))
+      cols_bad <- paste(names(problems_by_col), collapse = ", ")
+      message(
+        "Coerced invalid date(s) in ",
+        basename(zipfile), " :: ", inner_file,
+        " | column(s): ", cols_bad,
+        " | failures: ", n_bad
+      )
+
+      # show up to a few examples per column
+      for (nm in names(problems_by_col)) {
+        p <- problems_by_col[[nm]]
+        p <- dplyr::as_tibble(p)
+        p_show <- utils::head(p, 5)
+        message("  - ", nm, ":")
+        print(p_show)
+      }
+    }
+
+    return(list(df = df2, repairs = "coerced-invalid-dates"))
+  }
+
+  list(df = df2, repairs = character(0))
+}
+
+#' Parse FFIEC YYYYMMDD dates silently
+#'
+#' Returns a Date vector. Invalid tokens become NA.
+#' Attaches an attribute "ffiec_date_problems" (a tibble) with parse failures.
+#' Never warns.
+#'
+#' @keywords internal
+#' @noRd
+parse_ffiec_yyyymmdd_silent <- function(x) {
+  x_chr <- as.character(x)
+
+  # treat these as missing for date parsing
+  na_tokens <- c("", "NA", "0", "00000000")
+
+  probs <- NULL
+  out <- withCallingHandlers(
+    readr::parse_date(
+      x_chr,
+      format = "%Y%m%d",
+      na = na_tokens
+    ),
+    warning = function(w) {
+      # swallow parse warnings; we'll get details from problems()
+      invokeRestart("muffleWarning")
+    }
   )
+
+  probs <- readr::problems(out)
+  attr(out, "ffiec_date_problems") <- probs
+  out
 }
 
 collapse_overflow_tabs <- function(lines, expected_cols) {
@@ -530,6 +662,25 @@ clean_cols <- function(cols) {
 pct_to_prop <- function(x) {
   x <- trimws(x)
   x[x == ""] <- NA_character_
+
+  # nothing to do
+  if (all(is.na(x))) return(x)
+
+  has_percent <- grepl("%$", x)
+  has_number  <- grepl("[0-9]", x)
+
+  # numeric-looking values that do NOT end with %
+  bad <- has_number & !has_percent & !is.na(x)
+
+  if (any(bad)) {
+    stop(
+      "pct_to_prop(): found numeric values not ending in '%': ",
+      paste(unique(x[bad]), collapse = ", "),
+      call. = FALSE
+    )
+  }
+
+  # safe to parse
   readr::parse_number(x) / 100
 }
 
