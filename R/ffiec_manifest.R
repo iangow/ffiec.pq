@@ -16,7 +16,6 @@
 #' \describe{
 #'   \item{zipfile}{Full path to the bulk zip file.}
 #'   \item{date}{Report date as a \code{Date}.}
-#'   \item{date_raw}{Report date in YYYYMMDD form.}
 #' }
 #' @export
 ffiec_list_zips <- function(raw_dir = NULL, schema = "ffiec") {
@@ -69,7 +68,6 @@ ffiec_list_zips <- function(raw_dir = NULL, schema = "ffiec") {
     zipfile = normalizePath(files, mustWork = FALSE),
     date = date
   ) |>
-    dplyr::mutate(date_raw = format(.data$date, "%Y%m%d")) |>
     dplyr::arrange(.data$date, .data$zipfile)
 }
 

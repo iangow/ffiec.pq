@@ -408,7 +408,7 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL, schema = "ffiec") {
 
   out <- dplyr::bind_rows(sched, dor) |>
     dplyr::relocate(
-      .data$type, .data$kind, .data$date, .data$date_raw,
+      .data$type, .data$kind, .data$date,
       .data$parquet, .data$zipfile, .data$n_parts, .data$repairs, .data$inner_files
     ) |>
     dplyr::arrange(.data$date, .data$type, .data$kind)
