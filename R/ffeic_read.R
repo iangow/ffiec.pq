@@ -135,23 +135,38 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
   )
 
   # ---- pass 1: fast path (no repairs) ----
+  fast_warnings <- character(0)
+
   fast_try <- try({
     con <- unz(zipfile, inner_file)
     on.exit(try(close(con), silent = TRUE), add = TRUE)
 
-    df1 <- readr::read_tsv(
-      con,
-      skip = 2,
-      quote = "",
-      col_names = cols,
-      na = c("", "NA", "CONF"),
-      col_types = colspec,
-      progress = FALSE,
-      show_col_types = FALSE
+    df1 <- withCallingHandlers(
+      readr::read_tsv(
+        con,
+        skip = 2,
+        quote = "",
+        col_names = cols,
+        na = c("", "NA", "CONF"),
+        col_types = colspec,
+        progress = FALSE,
+        show_col_types = FALSE
+      ),
+      warning = function(w) {
+        fast_warnings <<- c(fast_warnings, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }
     )
 
     df1
   }, silent = TRUE)
+
+  # Optional: surface the warnings in debug mode (you can keep/remove this block)
+  if (FALSE) {
+  #if (isTRUE(getOption("ffiec.pq.debug", FALSE)) && length(fast_warnings) > 0L) {
+    message("Fast-path warnings in ", inner_file, ":")
+    for (msg in unique(fast_warnings)) message("  - ", msg)
+  }
 
   if (!inherits(fast_try, "try-error")) {
     df1 <- fast_try
