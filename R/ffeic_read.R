@@ -203,6 +203,7 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
   df <- readr::read_tsv(
     tmp,
     skip = 2,
+    quote="",
     col_names = cols,
     na = c("", "NA", "CONF"),
     col_types = colspec,
