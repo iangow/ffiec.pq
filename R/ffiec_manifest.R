@@ -98,15 +98,132 @@ get_cr_files <- function(zip_file) {
     dplyr::select(-.data$date_raw_mmddyyyy)
 }
 
-#' Determine DOR/POR kind from an internal filename
+#' Determine POR kind from an internal filename
 #'
 #' @param inner_file Internal file path within the zip.
 #'
 #' @return A scalar character string giving the kind.
 #' @keywords internal
 #' @noRd
-dor_kind <- function(inner_file) {
+por_kind <- function(inner_file) {
   bn <- basename(inner_file)
   if (grepl("Call Bulk POR", bn, fixed = TRUE)) return("por")
-  "dor"
+  "por"
+}
+
+#' Scan FFIEC Parquet files into DuckDB
+#'
+#' Create a lazy \code{tbl} backed by DuckDB by scanning one or more FFIEC
+#' Parquet files. Files are selected either by schedule name (using a
+#' glob pattern) or by an explicit Parquet filename. No data is read
+#' eagerly; evaluation occurs only when the result is collected.
+#'
+#' This function is intended for use with Parquet files produced by
+#' [ffiec_process()]. It validates that the requested files exist on
+#' disk before constructing the DuckDB query.
+#'
+#' @param conn A valid DuckDB connection.
+#' @param schedule Optional character scalar giving the FFIEC schedule
+#'   name (e.g. \code{"rc"}, \code{"rci"}, \code{"rcb"}. All matching Parquet files
+#'   of the form \code{\{prefix\}\{schedule\}_YYYYMMDD.parquet} will be scanned.
+#' @param pq_file Optional character scalar giving a specific Parquet
+#'   filename or glob pattern relative to `pq_dir`.
+#' @param pq_dir Directory containing FFIEC Parquet files. If `NULL`,
+#'   defaults to the resolved output directory for `schema`.
+#' @param schema Schema name used to resolve default directories
+#'   (default \code{"ffiec"}).
+#' @param prefix Optional filename prefix used when the Parquet files
+#'   were created (default \code{""}).
+#' @param union_by_name Logical; whether to union Parquet files by column
+#'   name when scanning multiple files (passed to DuckDB's
+#'   \code{read_parquet()}). Default is \code{TRUE}.
+#'
+#' @details
+#' Exactly one of `schedule` or `pq_file` must be supplied.
+#'
+#' When `schedule` is used, files are located using a glob pattern:
+#' \code{\{prefix\}\{schedule\}_*.parquet}. When \code{pq_file} is used, the value is
+#' treated as a filename or glob pattern relative to \code{pq_dir}.
+#'
+#' A fast filesystem check is performed using \code{Sys.glob()}. If no files
+#' match, the function errors before issuing any DuckDB query.
+#'
+#' @return A lazy `tbl` backed by DuckDB.
+#'
+#' @examples
+#' \dontrun{
+#' con <- DBI::dbConnect(duckdb::duckdb())
+#'
+#' # Scan all RC schedule files
+#' rc <- ffiec_scan_pqs(con, schedule = "rc")
+#'
+#' # Scan a single Parquet file
+#' dor <- ffiec_scan_pqs(con, pq_file = "dor_20231231.parquet")
+#'
+#' # Work lazily
+#' rc |> dplyr::count(date)
+#' }
+#'
+#' @export
+ffiec_scan_pqs <- function(conn,
+                           schedule = NULL,
+                           pq_file = NULL,
+                           pq_dir = NULL,
+                           schema = "ffiec",
+                           prefix = "",
+                           union_by_name = TRUE) {
+
+  pq_dir <- resolve_out_dir(pq_dir, schema)
+  if (is.null(pq_dir)) {
+    stop("Provide `pq_dir` or set DATA_DIR.", call. = FALSE)
+  }
+  stopifnot(DBI::dbIsValid(conn), nzchar(pq_dir))
+
+  # exactly one of schedule / pq_file
+  n_specified <- sum(!is.null(schedule), !is.null(pq_file))
+  if (n_specified != 1L) {
+    stop("Provide exactly one of `schedule` or `pq_file`.", call. = FALSE)
+  }
+
+  if (!is.null(schedule)) {
+    glob <- file.path(pq_dir, sprintf("%s%s_*.parquet", prefix, schedule))
+    matches <- Sys.glob(glob)
+
+    if (length(matches) == 0L) {
+      stop(
+        sprintf(
+          "No parquet files found for schedule '%s' using pattern:\n  %s",
+          schedule, glob
+        ),
+        call. = FALSE
+      )
+    }
+
+    sql <- sprintf(
+      "SELECT * FROM read_parquet(%s, union_by_name=%s)",
+      DBI::dbQuoteString(conn, glob),
+      if (isTRUE(union_by_name)) "true" else "false"
+    )
+
+  } else {
+    glob <- file.path(pq_dir, pq_file)
+    matches <- Sys.glob(glob)
+
+    if (length(matches) == 0L) {
+      stop(
+        sprintf(
+          "Parquet file not found:\n  %s",
+          glob
+        ),
+        call. = FALSE
+      )
+    }
+
+    sql <- sprintf(
+      "SELECT * FROM read_parquet(%s)",
+      DBI::dbQuoteString(conn, glob)
+    )
+  }
+
+  dplyr::tbl(conn, dbplyr::sql(sql))
 }

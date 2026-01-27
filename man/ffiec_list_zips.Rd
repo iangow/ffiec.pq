@@ -17,7 +17,6 @@ A tibble with columns:
 \describe{
   \item{zipfile}{Full path to the bulk zip file.}
   \item{date}{Report date as a \code{Date}.}
-  \item{date_raw}{Report date in YYYYMMDD form.}
 }
 }
 \description{

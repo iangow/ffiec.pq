@@ -1,3 +1,14 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
 ^LICENSE\.md$
+^ffiec.pq\.Rproj$
+^\.Rproj\.user$
+^LICENSE\.md$
+^README\.Rmd$
+^data-raw
+cran-comments.md
+^CRAN-SUBMISSION$
+^doc$
+^Meta$
+^CRAN-RELEASE$
+^revdep$

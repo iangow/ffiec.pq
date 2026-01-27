@@ -568,9 +568,9 @@ make_colspec <- function(cols, schema, xbrl_to_readr, ffiec_col_overrides = char
   do.call(readr::cols_only, spec)
 }
 
-#' Read a DOR/POR TSV from within a zip file
+#' Read a POR TSV from within a zip file
 #'
-#' Reads a non-schedule file (DOR/POR) from a bulk zip without extracting it.
+#' Reads a non-schedule file (POR) from a bulk zip without extracting it.
 #' Detects whether a description row is present and adjusts \code{skip}.
 #'
 #' If the column \code{last_date_time_submission_updated_on} is present, it is parsed
@@ -582,7 +582,7 @@ make_colspec <- function(cols, schema, xbrl_to_readr, ffiec_col_overrides = char
 #' @return A tibble containing the parsed file.
 #' @keywords internal
 #' @noRd
-read_dor_from_zip <- function(zipfile, inner_file) {
+read_por_from_zip <- function(zipfile, inner_file) {
 
   safe_close <- function(con) {
     try(close(con), silent = TRUE)
@@ -595,7 +595,7 @@ read_dor_from_zip <- function(zipfile, inner_file) {
   lines <- readLines(con1, n = 2)
   if (length(lines) < 1) stop("Empty file inside zip: ", inner_file)
 
-  header <- clean_dor_cols(split_tsv_line(lines[1]))
+  header <- clean_por_cols(split_tsv_line(lines[1]))
 
   skip <- 1L
   if (length(lines) >= 2 && "IDRSSD" %in% header) {
@@ -643,14 +643,14 @@ read_dor_from_zip <- function(zipfile, inner_file) {
   df
 }
 
-#' Clean header column names for DOR/POR TSVs
+#' Clean header column names for POR TSVs
 #'
 #' @param cols Character vector of raw column names.
 #'
 #' @return Character vector of cleaned column names.
 #' @keywords internal
 #' @noRd
-clean_dor_cols <- function(cols) {
+clean_por_cols <- function(cols) {
   cols <- clean_cols(cols)
 
   cols <- stringr::str_replace_all(cols, "[^A-Za-z0-9]+", "_")

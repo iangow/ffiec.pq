@@ -20,8 +20,6 @@ ffiec_process(
 
 \item{schema}{Subdirectory name under \code{RAW_DATA_DIR} and \code{DATA_DIR}.
 Defaults to \code{"ffiec"}.}
-
-\item{zipfile}{Path to a single bulk FFIEC zip file.}
 }
 \value{
 A tibble describing written Parquet files.

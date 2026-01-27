@@ -134,12 +134,14 @@ resolve_n_parts <- function(files_tbl, zipfile) {
 #' @param schema Arrow schema mapping.
 #' @param xbrl_to_readr XBRL-to-readr type mapping.
 #' @param out_dir Output directory for Parquet files.
+#' @param prefix Prefix to be appended to the beginning of parquet file names.
 #'
 #' @return A tibble with columns \code{schedule}, \code{date_raw}, \code{date},
 #'   \code{parquet}, and \code{n_parts}.
 #' @keywords internal
 #' @noRd
-process_zip_schedules <- function(zipfile, inside_files, schema, xbrl_to_readr, out_dir) {
+process_zip_schedules <- function(zipfile, inside_files, schema,
+                                  xbrl_to_readr, out_dir, prefix="") {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
   targets <- inside_files |>
@@ -205,7 +207,7 @@ process_zip_schedules <- function(zipfile, inside_files, schema, xbrl_to_readr, 
     repairs <- attr(df, "ffiec_repairs", exact = TRUE)
     if (is.null(repairs)) repairs <- character(0)
 
-    out_path <- file.path(out_dir, sprintf("sched_%s_%s.parquet", schedule, date_raw))
+    out_path <- file.path(out_dir, sprintf("%s%s_%s.parquet", prefix, schedule, date_raw))
     arrow::write_parquet(df, out_path)
 
     tibble::tibble(
@@ -227,7 +229,7 @@ process_zip_schedules <- function(zipfile, inside_files, schema, xbrl_to_readr, 
   )
 }
 
-# ---- DOR/POR helpers ----
+# ---- POR helpers ----
 
 #' Extract a single internal file from a zip to an output directory
 #'
@@ -273,16 +275,17 @@ extract_one_inner_file <- function(zipfile, inner_file, out_dir, out_name) {
 #' @noRd
 split_tsv_line <- function(line) strsplit(line, "\t", fixed = TRUE)[[1]]
 
-#' Process non-schedule DOR/POR files from a bulk zip into Parquet
+#' Process non-schedule POR files from a bulk zip into Parquet
 #'
 #' @param zipfile Path to the bulk zip file.
 #' @param inside_files A tibble as returned by \code{get_cr_files()}.
 #' @param out_dir Output directory for Parquet files.
+#' @param prefix Prefix appended to Parquet file names.
 #'
 #' @return A tibble with \code{kind}, \code{date}, \code{date_raw}, \code{inner_file}, \code{parquet}.
 #' @keywords internal
 #' @noRd
-process_zip_dor <- function(zipfile, inside_files, out_dir) {
+process_zip_por <- function(zipfile, inside_files, out_dir, prefix="") {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
   targets <- inside_files |>
@@ -297,9 +300,9 @@ process_zip_dor <- function(zipfile, inside_files, out_dir) {
     inner_file <- row$file[[1]]
     date <- row$date[[1]]
     date_raw <- row$date_raw[[1]]
-    kind <- dor_kind(inner_file)
+    kind <- por_kind(inner_file)
 
-    df <- read_dor_from_zip(zipfile, inner_file) |>
+    df <- read_por_from_zip(zipfile, inner_file) |>
       dplyr::mutate(
         date = date,
         dplyr::across(
@@ -316,12 +319,12 @@ process_zip_dor <- function(zipfile, inside_files, out_dir) {
 
     out_path <- file.path(
       out_dir,
-      sprintf("dor_%s_%s.parquet", kind, date_raw)
+      sprintf("%s_%s.parquet", kind, date_raw)
     )
     arrow::write_parquet(df, out_path)
 
     tibble::tibble(
-      type        = "dor",
+      type        = "por",
       kind        = kind,
       date        = date,
       date_raw    = date_raw,
@@ -347,7 +350,7 @@ resolve_raw_dir <- function(raw_dir, schema) {
 
 #' @keywords internal
 #' @noRd
-resolve_out_dir <- function(out_dir, schema) {
+resolve_out_dir <- function(out_dir = NULL, schema) {
   if (!is.null(out_dir)) return(out_dir)
 
   parent <- Sys.getenv("DATA_DIR", unset = "")
@@ -394,8 +397,8 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL, schema = "ffiec") {
       inner_files = dplyr::coalesce(.data$inner_files, list(character(0)))
     )
 
-  # ---- DOR/POR (returns tibble) ----
-  dor <- process_zip_dor(
+  # ---- POR (returns tibble) ----
+  por <- process_zip_por(
     zipfile      = zipfile,
     inside_files = inside,
     out_dir      = out_dir
@@ -406,7 +409,7 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL, schema = "ffiec") {
       inner_files = dplyr::coalesce(.data$inner_files, list(character(0)))
     )
 
-  out <- dplyr::bind_rows(sched, dor) |>
+  out <- dplyr::bind_rows(sched, por) |>
     dplyr::relocate(
       .data$type, .data$kind, .data$date,
       .data$parquet, .data$zipfile, .data$n_parts, .data$repairs, .data$inner_files
@@ -422,7 +425,6 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL, schema = "ffiec") {
 #' High-level convenience wrapper around
 #' \code{process_ffiec_zip()} and \code{process_ffiec_zips()}.
 #'
-#' @param zipfile Path to a single bulk FFIEC zip file.
 #' @param zipfiles Optional vector of bulk zip file paths.
 #' @param raw_dir Directory containing bulk zip files.
 #' @param out_dir Output directory for Parquet files.
@@ -456,4 +458,58 @@ ffiec_process <- function(zipfiles = NULL, raw_dir = NULL, out_dir = NULL, schem
 
   attr(out, "out_dir") <- out_dir
   out
+}
+
+#' List generated FFIEC Parquet files
+#'
+#' Lists Parquet files produced by \code{ffiec_process()} and returns
+#' their filenames, full paths, and a simplified pattern with the date removed.
+#'
+#' @param out_dir Directory containing FFIEC Parquet files.
+#'   If \code{NULL}, resolved via \code{DATA_DIR} and \code{schema}.
+#' @param schema Character scalar identifying the schema subdirectory
+#'   (default \code{"ffiec"}).
+#' @param prefix Prefix appended to Parquet file names.
+#'
+#' @return A tibble with one row per Parquet file and columns:
+#' \describe{
+#'   \item{base_name}{File name without directory.}
+#'   \item{full_name}{Full path to the Parquet file.}
+#'   \item{pattern}{File name with the YYYYMMDD date removed.}
+#' }
+#'
+#' @export
+ffiec_list_pqs <- function(out_dir = NULL, schema = "ffiec", prefix="") {
+  out_dir <- resolve_out_dir(out_dir, schema)
+  if (is.null(out_dir)) {
+    stop("Provide `out_dir` or set DATA_DIR.", call. = FALSE)
+  }
+
+  out_dir <- normalizePath(out_dir, mustWork = FALSE)
+
+  res <- list.files(
+    out_dir,
+    pattern = "\\.parquet$",
+    full.names = TRUE
+  )
+
+  base_name <- basename(res)
+
+  tibble::tibble(
+    base_name  = base_name,
+    full_name  = res,
+    schedule   = extract_schedule(base_name, prefix)
+  )
+}
+
+#' @keywords internal
+#' @noRd
+extract_schedule <- function(files, prefix = "") {
+  x <- basename(files)
+
+  # lop off the prefix using fixed matching (NOT regex)
+  x <- sub(paste0("^", prefix), "", x, fixed = TRUE)
+
+  # now the filename is: schedule_YYYYMMDD.parquet
+  sub("_\\d{8}\\.parquet$", "", x)
 }
