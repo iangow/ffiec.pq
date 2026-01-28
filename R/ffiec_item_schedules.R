@@ -1,0 +1,33 @@
+#' FFIEC item availability by schedule and date
+#'
+#' A reference table indicating which FFIEC data items appear in which Call
+#' Report schedules, and on which reporting dates, based on the schemas of the
+#' Parquet datasets managed by \code{ffiec.pq}.
+#'
+#' @format A tibble with one row per item–schedule combination and the following
+#' columns:
+#' \describe{
+#'   \item{item}{FFIEC item identifier (e.g., \code{"RCFD2170"}).}
+#'   \item{schedule}{Call Report schedule identifier (e.g., \code{"rc"},
+#'     \code{"rcn"}, \code{"ci"}).}
+#'   \item{dates}{List-column of \code{Date} values indicating reporting dates
+#'     on which the item appears in the Parquet data for the given schedule.}
+#' }
+#'
+#' @details
+#' Dates are inferred from Parquet file names and reflect the presence of the
+#' item as a column in the dataset schema. This table describes observed data
+#' availability and does not imply continuous reporting between dates.
+#'
+#' @seealso \code{\link{ffiec_items}}, \code{\link{ffiec_item_details}}
+#'
+#' @examples
+#' # Schedules in which an item appears
+#' dplyr::filter(ffiec_item_schedules, item == "RCFD2170")
+#'
+#' # First appearance of each item
+#' ffiec_item_schedules |>
+#'   tidyr::unnest(dates) |>
+#'   dplyr::group_by(item) |>
+#'   dplyr::summarise(first_date = min(dates))
+"ffiec_item_schedules"
