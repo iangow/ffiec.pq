@@ -45,7 +45,7 @@
 #' examination/supervision items) do not appear in the Parquet datasets and are
 #' therefore not represented in this table.
 #'
-#' @seealso \code{\link{ffiec_items}}, \code{\link{ffiec_item_schedules}}
+#' @seealso \code{\link{ffiec_items}}
 #'
 #' @examples
 #' # Active definitions for a single item

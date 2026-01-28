@@ -60,6 +60,6 @@ therefore not represented in this table.
 dplyr::filter(ffiec_item_details, item == "RCFD2170", is.na(end_date))
 }
 \seealso{
-\code{\link{ffiec_items}}, \code{\link{ffiec_item_schedules}}
+\code{\link{ffiec_items}}
 }
 \keyword{datasets}

@@ -36,6 +36,6 @@ ffiec_items
 dplyr::filter(ffiec_items, stringr::str_detect(item_name, "Tier 1"))
 }
 \seealso{
-\code{\link{ffiec_item_details}}, \code{\link{ffiec_item_schedules}}
+\code{\link{ffiec_item_details}}
 }
 \keyword{datasets}

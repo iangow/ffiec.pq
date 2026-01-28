@@ -139,14 +139,6 @@ fix_item_name_case <- function(x) {
     fix_lower_words(lower_words)
 }
 
-# ---- Parquet schema helpers (arrow-version-proof) ----
-pq_cols <- function(path) {
-  arrow::read_parquet(path, as_data_frame = FALSE)$schema$names
-}
-
-# ---- List parquet files ----
-pqs <- ffiec.pq::ffiec_list_pqs()
-
 # Union of all columns across non-POR schedules
 cols_union <-
   pqs |>
@@ -178,26 +170,5 @@ ffiec_item_details <-
   distinct() |>
   arrange(item, reporting_form, start_date)
 
-# ---- ffiec_item_schedules ----
-ffiec_item_schedules <-
-  pqs |>
-  filter(!schedule %in% c("items", "por")) |>
-  filter(str_detect(base_name, "_\\d{8}\\.parquet$")) |>
-  mutate(
-    date = as.Date(str_extract(base_name, "\\d{8}"), format = "%Y%m%d"),
-    cols = map(full_name, pq_cols)
-  ) |>
-  select(schedule, date, cols) |>
-  unnest(cols, names_repair = "minimal") |>
-  rename(item = cols) |>
-  filter(item != "IDRSSD") |>
-  group_by(item, schedule) |>
-  summarise(
-    dates = list(sort(unique(date))),
-    .groups = "drop"
-  ) |>
-  arrange(item, schedule)
-
 # ---- Save as package data ----
-usethis::use_data(ffiec_items, ffiec_item_details, ffiec_item_schedules,
-                  overwrite = TRUE)
+usethis::use_data(ffiec_items, ffiec_item_details, overwrite = TRUE)

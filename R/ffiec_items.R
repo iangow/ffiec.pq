@@ -21,7 +21,7 @@
 #' (excluding POR schedules). Items defined in the MDRM but never observed
 #' in the Parquet data are excluded.
 #'
-#' @seealso \code{\link{ffiec_item_details}}, \code{\link{ffiec_item_schedules}}
+#' @seealso \code{\link{ffiec_item_details}}
 #'
 #' @examples
 #' ffiec_items

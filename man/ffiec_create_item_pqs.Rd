@@ -4,12 +4,7 @@
 \alias{ffiec_create_item_pqs}
 \title{Create FFIEC item Parquet files}
 \usage{
-ffiec_create_item_pqs(
-  out_dir = NULL,
-  schema = "ffiec",
-  overwrite = FALSE,
-  include_long = TRUE
-)
+ffiec_create_item_pqs(out_dir = NULL, schema = "ffiec", overwrite = FALSE)
 }
 \arguments{
 \item{out_dir}{Optional output directory. If \code{NULL}, the directory is
@@ -19,9 +14,6 @@ resolved using \code{schema} and environment variables, as in
 \item{schema}{Schema name passed to \code{resolve_out_dir()}.}
 
 \item{overwrite}{Logical; whether to overwrite existing files.}
-
-\item{include_long}{Logical; whether to also write an unnested ("long")
-version of \code{ffiec_item_schedules} with one row per date.}
 }
 \value{
 A tibble with one row per file written and columns \code{base_name},
