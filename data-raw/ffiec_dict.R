@@ -200,3 +200,12 @@ ffiec_item_schedules <-
 usethis::use_data(ffiec_items, ffiec_item_details, ffiec_item_schedules,
                   overwrite = TRUE)
 
+# ---- Also write Parquet copies (for Python / Arrow users) ----
+out_dir <- file.path("inst", "extdata")
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+arrow::write_parquet(ffiec_items, file.path(out_dir, "ffiec_items.parquet"))
+arrow::write_parquet(ffiec_item_details, file.path(out_dir, "ffiec_item_details.parquet"))
+arrow::write_parquet(ffiec_item_schedules, file.path(out_dir, "ffiec_item_schedules.parquet"))
+
+
