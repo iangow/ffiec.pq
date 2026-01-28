@@ -150,7 +150,8 @@ pqs <- ffiec.pq::ffiec_list_pqs()
 # Union of all columns across non-POR schedules
 cols_union <-
   pqs |>
-  filter(schedule != "por") |>
+  filter(!schedule %in% c("items", "por")) |>
+  filter(str_detect(base_name, "_\\d{8}\\.parquet$")) |>
   pull(full_name) |>
   map(pq_cols) |>
   unlist(use.names = FALSE) |>
@@ -180,7 +181,8 @@ ffiec_item_details <-
 # ---- ffiec_item_schedules ----
 ffiec_item_schedules <-
   pqs |>
-  filter(schedule != "por") |>
+  filter(!schedule %in% c("items", "por")) |>
+  filter(str_detect(base_name, "_\\d{8}\\.parquet$")) |>
   mutate(
     date = as.Date(str_extract(base_name, "\\d{8}"), format = "%Y%m%d"),
     cols = map(full_name, pq_cols)
@@ -199,13 +201,3 @@ ffiec_item_schedules <-
 # ---- Save as package data ----
 usethis::use_data(ffiec_items, ffiec_item_details, ffiec_item_schedules,
                   overwrite = TRUE)
-
-# ---- Also write Parquet copies (for Python / Arrow users) ----
-out_dir <- file.path("inst", "extdata")
-dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-
-arrow::write_parquet(ffiec_items, file.path(out_dir, "ffiec_items.parquet"))
-arrow::write_parquet(ffiec_item_details, file.path(out_dir, "ffiec_item_details.parquet"))
-arrow::write_parquet(ffiec_item_schedules, file.path(out_dir, "ffiec_item_schedules.parquet"))
-
-
