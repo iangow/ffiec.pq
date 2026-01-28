@@ -8,10 +8,17 @@ library(readr)
 library(arrow)
 
 # ---- Paths ----
-zip_path <- file.path(Sys.getenv("RAW_DATA_DIR"), "ffiec", "MDRM.zip")
-stopifnot(file.exists(zip_path))
+mdrm_url <- "https://www.federalreserve.gov/apps/mdrm/pdf/MDRM.zip"
 
-mdrm_con <- function() unz(zip_path, "MDRM_CSV.csv", open = "rb")
+mdrm_zip <- tempfile(fileext = ".zip")
+download.file(mdrm_url, mdrm_zip, mode = "wb")
+
+zip_contents <- utils::unzip(mdrm_zip, list = TRUE)$Name
+stopifnot("MDRM_CSV.csv" %in% zip_contents)
+
+mdrm_con <- function() {
+  unz(mdrm_zip, "MDRM_CSV.csv", open = "rb")
+}
 
 # ---- Read MDRM from zip ----
 # con <- mdrm_con(); on.exit(close(con), add = TRUE)
