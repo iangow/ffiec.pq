@@ -158,7 +158,7 @@ por_kind <- function(inner_file) {
 #' rc <- ffiec_scan_pqs(con, schedule = "rc")
 #'
 #' # Scan a single Parquet file
-#' dor <- ffiec_scan_pqs(con, pq_file = "dor_20231231.parquet")
+#' por <- ffiec_scan_pqs(con, pq_file = "por_20231231.parquet")
 #'
 #' # Work lazily
 #' rc |> dplyr::count(date)
