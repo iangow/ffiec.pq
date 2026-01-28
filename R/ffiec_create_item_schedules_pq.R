@@ -45,11 +45,20 @@ ffiec_create_item_schedules_pq <- function(out_dir = NULL,
   }
 
   out_path <- file.path(out_dir, file_name)
-  if (!overwrite && file.exists(out_path)) {
-    stop(
-      "Output file already exists. Use overwrite = TRUE to replace it:\n",
-      basename(out_path),
-      call. = FALSE
+
+  if (file.exists(out_path) && !overwrite) {
+    message(
+      "File already exists: ", basename(out_path), "\n",
+      "Re-run `ffiec_create_item_schedules_pq()` with `overwrite = TRUE` to replace it."
+    )
+
+    return(
+      tibble::tibble(
+        base_name = basename(out_path),
+        full_name = out_path,
+        schedule  = "items",
+        written   = FALSE
+      )
     )
   }
 
