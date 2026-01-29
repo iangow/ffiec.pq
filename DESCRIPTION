@@ -1,16 +1,17 @@
 Package: ffiec.pq
 Type: Package
-Title: What the Package Does (Title Case)
+Title: Tools for Processing FFIEC Call Report Data
 Version: 0.1.0
+Description: Utilities for downloading, parsing, and processing FFIEC Call
+    Report bulk data into columnar Parquet files suitable for analysis in R,
+    Python, and SQL engines such as DuckDB.
 Authors@R: c(
     person(
-      "Jane", "Doe",
-      email = "jane@example.com",
+      "Ian", "Gow",
+      email = "iandgow@gmail.com",
       role = c("aut", "cre")
     )
   )
-Description: More about what it does (maybe more than one line).
-    Continuation lines should be indented.
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
