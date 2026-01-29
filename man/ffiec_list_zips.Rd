@@ -4,13 +4,20 @@
 \alias{ffiec_list_zips}
 \title{List FFIEC bulk zip files}
 \usage{
-ffiec_list_zips(raw_dir = NULL, schema = "ffiec")
+ffiec_list_zips(in_dir = NULL, raw_data_dir = NULL, schema = "ffiec")
 }
 \arguments{
-\item{raw_dir}{Directory containing FFIEC bulk zip files. If `NULL`, uses
-`RAW_DATA_DIR` and `schema`.}
+\item{in_dir}{Optional directory containing FFIEC bulk zip files (fully
+qualified). If \code{NULL}, the directory is resolved using
+\code{raw_data_dir} and \code{schema}, or the \code{RAW_DATA_DIR}
+environment variable.}
 
-\item{schema}{Subdirectory name under `RAW_DATA_DIR`. Defaults to `"ffiec"`.}
+\item{raw_data_dir}{Optional parent directory containing schema
+subdirectories for raw FFIEC bulk zip files. Ignored if \code{in_dir}
+is provided.}
+
+\item{schema}{Schema name used to resolve the input directory
+(default \code{"ffiec"}).}
 }
 \value{
 A tibble with columns:
@@ -20,12 +27,26 @@ A tibble with columns:
 }
 }
 \description{
-Scans a directory for FFIEC "Call Bulk All Schedules" zip files and returns
-a tibble with the zipfile paths and the report date parsed from the filename.
+Scans a directory for FFIEC “Call Bulk All Schedules” zip files and returns
+a tibble with the zipfile paths and the report dates parsed from the filenames.
 }
 \details{
-Directory resolution:
-- If `raw_dir` is supplied, it is used as-is.
-- Otherwise, this function uses `RAW_DATA_DIR` and `schema` to form
-  `file.path(RAW_DATA_DIR, schema)`.
+This function is typically used to discover bulk zip files prior to calling
+[ffiec_process()].
+
+
+Filenames are expected to contain an 8-digit MMDDYYYY date token
+(e.g., \code{"FFIEC CDR Call Bulk All Schedules 12312022.zip"}), which
+is parsed and returned as a \code{Date}. An error is raised if any
+matching file does not conform to this convention.
+}
+\examples{
+\dontrun{
+# List bulk zip files using RAW_DATA_DIR/ffiec
+ffiec_list_zips()
+
+# List bulk zip files from an explicit directory
+ffiec_list_zips(in_dir = "/data/raw/ffiec")
+}
+
 }

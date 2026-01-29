@@ -4,26 +4,41 @@
 \alias{ffiec_list_pqs}
 \title{List generated FFIEC Parquet files}
 \usage{
-ffiec_list_pqs(out_dir = NULL, schema = "ffiec", prefix = "")
+ffiec_list_pqs(out_dir = NULL, data_dir = NULL, schema = "ffiec", prefix = "")
 }
 \arguments{
-\item{out_dir}{Directory containing FFIEC Parquet files.
-If \code{NULL}, resolved via \code{DATA_DIR} and \code{schema}.}
+\item{out_dir}{Optional directory containing FFIEC Parquet files. If \code{NULL},
+the directory is resolved using \code{data_dir} and \code{schema}, or the
+\code{DATA_DIR} environment variable.}
+
+\item{data_dir}{Optional parent directory containing schema subdirectories.
+Ignored if \code{out_dir} is provided.}
 
 \item{schema}{Character scalar identifying the schema subdirectory
 (default \code{"ffiec"}).}
 
-\item{prefix}{Prefix appended to Parquet file names.}
+\item{prefix}{Optional prefix prepended to Parquet file names
+(default \code{""}).}
 }
 \value{
 A tibble with one row per Parquet file and columns:
 \describe{
   \item{base_name}{File name without directory.}
   \item{full_name}{Full path to the Parquet file.}
-  \item{pattern}{File name with the YYYYMMDD date removed.}
+  \item{schedule}{Inferred FFIEC schedule identifier extracted from the file name.}
 }
 }
 \description{
-Lists Parquet files produced by \code{ffiec_process()} and returns
-their filenames, full paths, and a simplified pattern with the date removed.
+Lists Parquet files produced by \code{ffiec_process()} and returns their
+filenames, full paths, and inferred FFIEC schedule identifiers.
+}
+\examples{
+\dontrun{
+# List FFIEC Parquet files using DATA_DIR/ffiec
+ffiec_list_pqs()
+
+# List files from an explicit directory
+ffiec_list_pqs(out_dir = "/data/parquet/ffiec")
+}
+
 }

@@ -2,10 +2,11 @@
 % Please edit documentation in R/ffiec_create_item_schedules_pq.R
 \name{ffiec_create_item_schedules_pq}
 \alias{ffiec_create_item_schedules_pq}
-\title{Create FFIEC item-schedule coverage Parquet file}
+\title{Create FFIEC item–schedule coverage Parquet file}
 \usage{
 ffiec_create_item_schedules_pq(
   out_dir = NULL,
+  data_dir = NULL,
   schema = "ffiec",
   schedules = NULL,
   overwrite = FALSE,
@@ -16,10 +17,15 @@ ffiec_create_item_schedules_pq(
 )
 }
 \arguments{
-\item{out_dir}{Optional output directory. If \code{NULL}, the directory is
-resolved using \code{schema} and environment variables.}
+\item{out_dir}{Optional output directory containing FFIEC Parquet files.
+If \code{NULL}, the directory is resolved using \code{data_dir} and
+\code{schema}, or the \code{DATA_DIR} environment variable.}
 
-\item{schema}{Schema name passed to \code{resolve_out_dir()}.}
+\item{data_dir}{Optional parent directory containing schema subdirectories.
+Ignored if \code{out_dir} is provided.}
+
+\item{schema}{Schema name used to resolve the Parquet directory
+(default \code{"ffiec"}).}
 
 \item{schedules}{Optional character vector of schedules to include
 (e.g., \code{c("rc", "rcn")}). If \code{NULL}, all schedules are included
@@ -27,25 +33,44 @@ except \code{"por"} and \code{"items"}.}
 
 \item{overwrite}{Logical; whether to overwrite an existing output file.}
 
-\item{file_name}{Output parquet file name.}
+\item{file_name}{Output Parquet file name
+(default \code{"ffiec_item_schedules.parquet"}).}
 
-\item{progress}{Logical; whether to show a progress bar while reading schemas.}
+\item{progress}{Logical; whether to show a progress bar while reading
+Parquet schemas.}
 
-\item{cache}{Logical; whether to cache file schemas in an RDS file for
-faster repeated runs.}
+\item{cache}{Logical; whether to cache Parquet file schemas in an RDS file
+to speed up repeated runs.}
 
-\item{cache_file}{Optional cache file path. If \code{NULL}, defaults to
-\code{file.path(out_dir, ".ffiec_item_schedules_schema_cache.rds")}.}
+\item{cache_file}{Optional path to the schema cache file. If \code{NULL},
+defaults to \code{file.path(out_dir, ".ffiec_item_schedules_schema_cache.rds")}.}
 }
 \value{
-A tibble with one row describing the file written.
+A tibble with one row describing the file written, including its
+file name and full path.
 }
 \description{
-Scans FFIEC schedule Parquet files in the resolved output directory and
-creates a Parquet file describing which items (columns) appear in which
-schedules and on which reporting dates. Dates are inferred from file names.
+Scans FFIEC schedule Parquet files and creates a Parquet file describing
+which items (columns) appear in which schedules and on which reporting
+dates. Dates are inferred from Parquet file names.
 }
 \details{
-Includes optional filtering by schedule, a progress indicator, and a local
-cache (RDS) of Parquet schemas to speed up repeated runs.
+The resulting file summarizes item availability across all matching
+schedule Parquet files and is intended for downstream metadata inspection
+and cross-language use (e.g., Python, DuckDB).
+
+
+Parquet files are located using the same directory-resolution rules as
+[ffiec_list_pqs()]. Only files whose names end in \code{_YYYYMMDD.parquet}
+are considered. The identifier \code{"IDRSSD"} is excluded from the output.
+}
+\examples{
+\dontrun{
+# Create item–schedule coverage using DATA_DIR/ffiec
+ffiec_create_item_schedules_pq()
+
+# Restrict to selected schedules
+ffiec_create_item_schedules_pq(schedules = c("rc", "rcn"))
+}
+
 }

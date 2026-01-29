@@ -1,72 +1,100 @@
 #' List FFIEC bulk zip files
 #'
-#' Scans a directory for FFIEC "Call Bulk All Schedules" zip files and returns
-#' a tibble with the zipfile paths and the report date parsed from the filename.
+#' Scans a directory for FFIEC “Call Bulk All Schedules” zip files and returns
+#' a tibble with the zipfile paths and the report dates parsed from the filenames.
 #'
-#' Directory resolution:
-#' - If `raw_dir` is supplied, it is used as-is.
-#' - Otherwise, this function uses `RAW_DATA_DIR` and `schema` to form
-#'   `file.path(RAW_DATA_DIR, schema)`.
+#' This function is typically used to discover bulk zip files prior to calling
+#' [ffiec_process()].
 #'
-#' @param raw_dir Directory containing FFIEC bulk zip files. If `NULL`, uses
-#'   `RAW_DATA_DIR` and `schema`.
-#' @param schema Subdirectory name under `RAW_DATA_DIR`. Defaults to `"ffiec"`.
+#' @param in_dir Optional directory containing FFIEC bulk zip files (fully
+#'   qualified). If \code{NULL}, the directory is resolved using
+#'   \code{raw_data_dir} and \code{schema}, or the \code{RAW_DATA_DIR}
+#'   environment variable.
+#' @param raw_data_dir Optional parent directory containing schema
+#'   subdirectories for raw FFIEC bulk zip files. Ignored if \code{in_dir}
+#'   is provided.
+#' @param schema Schema name used to resolve the input directory
+#'   (default \code{"ffiec"}).
+#'
+#' @details
+#' Filenames are expected to contain an 8-digit MMDDYYYY date token
+#' (e.g., \code{"FFIEC CDR Call Bulk All Schedules 12312022.zip"}), which
+#' is parsed and returned as a \code{Date}. An error is raised if any
+#' matching file does not conform to this convention.
 #'
 #' @return A tibble with columns:
 #' \describe{
 #'   \item{zipfile}{Full path to the bulk zip file.}
 #'   \item{date}{Report date as a \code{Date}.}
 #' }
+#'
+#' @examples
+#' \dontrun{
+#' # List bulk zip files using RAW_DATA_DIR/ffiec
+#' ffiec_list_zips()
+#'
+#' # List bulk zip files from an explicit directory
+#' ffiec_list_zips(in_dir = "/data/raw/ffiec")
+#' }
+#'
 #' @export
-ffiec_list_zips <- function(raw_dir = NULL, schema = "ffiec") {
-  raw_dir <- resolve_raw_dir(raw_dir, schema)
+ffiec_list_zips <- function(in_dir = NULL,
+                            raw_data_dir = NULL,
+                            schema = "ffiec") {
 
-  if (is.null(raw_dir) || !nzchar(raw_dir)) {
-    stop("Provide `raw_dir` or set RAW_DATA_DIR.", call. = FALSE)
+  in_dir <- resolve_raw_dir(in_dir = in_dir, raw_data_dir = raw_data_dir, schema = schema)
+
+  if (is.null(in_dir) || !nzchar(in_dir)) {
+    stop("Provide `in_dir`, or `raw_data_dir`, or set RAW_DATA_DIR.", call. = FALSE)
   }
 
+  in_dir <- normalizePath(in_dir, mustWork = FALSE)
+
   files <- list.files(
-    raw_dir,
-    pattern = "^FFIEC CDR Call Bulk All Schedules.*\\.zip$",
+    in_dir,
+    pattern = "\\.zip$",
     full.names = TRUE
   )
 
   if (length(files) == 0L) {
     return(tibble::tibble(
       zipfile = character(0),
-      date = as.Date(character(0)),
-      date_raw = character(0)
+      date = as.Date(character(0))
     ))
   }
 
+  # Extract 8-digit token; keep only those that look like MMDDYYYY
   mmddyyyy <- stringr::str_extract(basename(files), "\\d{8}")
-  bad <- is.na(mmddyyyy)
+  keep_tok <- !is.na(mmddyyyy)
 
-  if (any(bad)) {
-    stop(
-      "Could not parse an 8-digit MMDDYYYY date from these filenames:\n",
-      paste0("  - ", basename(files[bad]), collapse = "\n"),
-      "\nExpected filenames like: 'FFIEC CDR Call Bulk All Schedules 12312022.zip'",
-      call. = FALSE
-    )
+  if (!any(keep_tok)) {
+    # No matching bulk zips found; return empty tibble rather than error
+    return(tibble::tibble(
+      zipfile = character(0),
+      date = as.Date(character(0))
+    ))
   }
 
-  date <- as.Date(mmddyyyy, format = "%m%d%Y")
-  bad_date <- is.na(date)
+  files2 <- files[keep_tok]
+  tok2   <- mmddyyyy[keep_tok]
 
-  if (any(bad_date)) {
-    stop(
-      "Parsed date token(s) but as.Date() returned NA for:\n",
-      paste0("  - ", basename(files[bad_date]), collapse = "\n"),
-      "\nExtracted tokens:\n",
-      paste0("  - ", mmddyyyy[bad_date], collapse = "\n"),
-      call. = FALSE
-    )
+  date <- as.Date(tok2, format = "%m%d%Y")
+  keep_date <- !is.na(date)
+
+  # Drop files with unparseable date tokens (e.g., 13322025)
+  files3 <- files2[keep_date]
+  date3  <- date[keep_date]
+
+  if (length(files3) == 0L) {
+    return(tibble::tibble(
+      zipfile = character(0),
+      date = as.Date(character(0))
+    ))
   }
 
   tibble::tibble(
-    zipfile = normalizePath(files, mustWork = FALSE),
-    date = date
+    zipfile = normalizePath(files3, mustWork = FALSE),
+    date = date3
   ) |>
     dplyr::arrange(.data$date, .data$zipfile)
 }
@@ -114,9 +142,9 @@ por_kind <- function(inner_file) {
 #' Scan FFIEC Parquet files into DuckDB
 #'
 #' Create a lazy \code{tbl} backed by DuckDB by scanning one or more FFIEC
-#' Parquet files. Files are selected either by schedule name (using a
-#' glob pattern) or by an explicit Parquet filename. No data is read
-#' eagerly; evaluation occurs only when the result is collected.
+#' Parquet files. Files may be selected either by FFIEC schedule name
+#' (using a glob pattern) or by an explicit Parquet filename. No data is
+#' read eagerly; evaluation occurs only when the result is collected.
 #'
 #' This function is intended for use with Parquet files produced by
 #' [ffiec_process()]. It validates that the requested files exist on
@@ -124,14 +152,15 @@ por_kind <- function(inner_file) {
 #'
 #' @param conn A valid DuckDB connection.
 #' @param schedule Optional character scalar giving the FFIEC schedule
-#'   name (e.g. \code{"rc"}, \code{"rci"}, \code{"rcb"}. All matching Parquet files
+#'   name (e.g. \code{"rc"}, \code{"rci"}, \code{"rcb"}). All matching Parquet files
 #'   of the form \code{\{prefix\}\{schedule\}_YYYYMMDD.parquet} will be scanned.
 #' @param pq_file Optional character scalar giving a specific Parquet
-#'   filename or glob pattern relative to `pq_dir`.
-#' @param pq_dir Directory containing FFIEC Parquet files. If `NULL`,
-#'   defaults to the resolved output directory for `schema`.
+#'   filename or glob pattern.
+#' @param pq_dir Optional directory used to locate Parquet files. The
+#'   interpretation of this argument depends on \code{schema}; see Details.
 #' @param schema Schema name used to resolve default directories
-#'   (default \code{"ffiec"}).
+#'   (default \code{"ffiec"}). Set to \code{NULL} to treat \code{pq_dir}
+#'   as the final Parquet directory.
 #' @param prefix Optional filename prefix used when the Parquet files
 #'   were created (default \code{""}).
 #' @param union_by_name Logical; whether to union Parquet files by column
@@ -139,26 +168,57 @@ por_kind <- function(inner_file) {
 #'   \code{read_parquet()}). Default is \code{TRUE}.
 #'
 #' @details
-#' Exactly one of `schedule` or `pq_file` must be supplied.
+#' Exactly one of \code{schedule} or \code{pq_file} must be supplied.
 #'
-#' When `schedule` is used, files are located using a glob pattern:
-#' \code{\{prefix\}\{schedule\}_*.parquet}. When \code{pq_file} is used, the value is
-#' treated as a filename or glob pattern relative to \code{pq_dir}.
+#' \strong{Directory resolution}
+#'
+#' Parquet files are located using the following rules:
+#'
+#' \itemize{
+#'   \item If \code{schema} is non-\code{NULL} (the default), Parquet files are
+#'   expected to live in a subdirectory named \code{schema}. In this case,
+#'   \code{pq_dir} is interpreted as the parent directory, and files are read
+#'   from \code{file.path(pq_dir, schema)}. If \code{pq_dir} is \code{NULL},
+#'   the environment variable \code{DATA_DIR} is used as the parent directory.
+#'
+#'   \item If \code{schema = NULL}, \code{pq_dir} is interpreted as the final
+#'   directory containing Parquet files directly (no schema subdirectory is
+#'   appended). If \code{pq_dir} is \code{NULL}, \code{DATA_DIR} is used as the
+#'   Parquet directory.
+#'
+#'   \item If \code{pq_dir} is \code{NULL} and \code{DATA_DIR} is unset, and
+#'   \code{pq_file} is supplied, \code{pq_file} may be a fully qualified path
+#'   to an existing Parquet file.
+#' }
+#'
+#' When \code{schedule} is used, files are located using a glob pattern:
+#' \code{\{prefix\}\{schedule\}_*.parquet}. When \code{pq_file} is used, the value
+#' is treated as a filename or glob pattern relative to the resolved Parquet
+#' directory (unless it is a full path as described above).
 #'
 #' A fast filesystem check is performed using \code{Sys.glob()}. If no files
 #' match, the function errors before issuing any DuckDB query.
 #'
-#' @return A lazy `tbl` backed by DuckDB.
+#' @return A lazy \code{tbl} backed by DuckDB.
 #'
 #' @examples
 #' \dontrun{
 #' con <- DBI::dbConnect(duckdb::duckdb())
 #'
-#' # Scan all RC schedule files
+#' # Scan all RC schedule files using DATA_DIR/ffiec
 #' rc <- ffiec_scan_pqs(con, schedule = "rc")
 #'
-#' # Scan a single Parquet file
+#' # Scan from a specific parent directory
+#' rc <- ffiec_scan_pqs(con, schedule = "rc", pq_dir = "/data/parquet")
+#'
+#' # Treat pq_dir as the final directory (no schema subdir)
+#' rc <- ffiec_scan_pqs(con, schedule = "rc", pq_dir = "/data/ffiec", schema = NULL)
+#'
+#' # Scan a single Parquet file by name using DATA_DIR/ffiec
 #' por <- ffiec_scan_pqs(con, pq_file = "por_20231231.parquet")
+#'
+#' # Scan a Parquet file via full path
+#' por <- ffiec_scan_pqs(con, pq_file = "/tmp/por_20231231.parquet")
 #'
 #' # Work lazily
 #' rc |> dplyr::count(date)
@@ -173,11 +233,7 @@ ffiec_scan_pqs <- function(conn,
                            prefix = "",
                            union_by_name = TRUE) {
 
-  pq_dir <- resolve_out_dir(pq_dir, schema)
-  if (is.null(pq_dir)) {
-    stop("Provide `pq_dir` or set DATA_DIR.", call. = FALSE)
-  }
-  stopifnot(DBI::dbIsValid(conn), nzchar(pq_dir))
+  stopifnot(DBI::dbIsValid(conn))
 
   # exactly one of schedule / pq_file
   n_specified <- sum(!is.null(schedule), !is.null(pq_file))
@@ -185,8 +241,62 @@ ffiec_scan_pqs <- function(conn,
     stop("Provide exactly one of `schedule` or `pq_file`.", call. = FALSE)
   }
 
+  # ---- Resolve parquet directory / file strategy ----
+  # Rules:
+  # - If schema is NULL: pq_dir is the full parquet directory (no schema appended)
+  # - If schema is non-NULL: pq_dir is parent; parquet directory is pq_dir/schema
+  #   with fallback to DATA_DIR/schema when pq_dir is NULL
+  # - If pq_dir is NULL AND DATA_DIR is unset AND pq_file is provided:
+  #   allow pq_file to be a full path to an existing parquet file.
+
+  data_dir_env <- Sys.getenv("DATA_DIR", unset = "")
+
+  resolve_parquet_dir <- function(pq_dir, schema) {
+    if (is.null(schema)) {
+      # pq_dir is the final parquet directory
+      if (!is.null(pq_dir) && nzchar(pq_dir)) return(pq_dir)
+      if (nzchar(data_dir_env)) return(data_dir_env)  # treat DATA_DIR as the parquet dir
+      return(NULL)
+    } else {
+      # pq_dir is parent of schema directory; fallback to DATA_DIR
+      parent <- if (!is.null(pq_dir) && nzchar(pq_dir)) pq_dir else if (nzchar(data_dir_env)) data_dir_env else ""
+      if (!nzchar(parent)) return(NULL)
+      file.path(parent, schema)
+    }
+  }
+
+  pq_path <- resolve_parquet_dir(pq_dir = pq_dir, schema = schema)
+
+  # If schedule mode: we must have a directory to glob
+  if (!is.null(schedule) && is.null(pq_path)) {
+    stop("Provide `pq_dir` or set DATA_DIR.", call. = FALSE)
+  }
+
+  # If pq_file mode and we don't have a dir, allow pq_file as full path
+  if (is.null(schedule) && is.null(pq_path)) {
+    # pq_file is required here by earlier check
+    if (file.exists(pq_file)) {
+      # treat pq_file as full path
+      glob <- normalizePath(pq_file, mustWork = TRUE)
+      sql <- sprintf(
+        "SELECT * FROM read_parquet(%s)",
+        DBI::dbQuoteString(conn, glob)
+      )
+      return(dplyr::tbl(conn, dbplyr::sql(sql)))
+    }
+
+    stop(
+      "Provide `pq_dir` / `DATA_DIR`, or supply `pq_file` as a full path to an existing Parquet file.",
+      call. = FALSE
+    )
+  }
+
+  # We have a directory-based path
+  stopifnot(nzchar(pq_path))
+  pq_path <- normalizePath(pq_path, mustWork = FALSE)
+
   if (!is.null(schedule)) {
-    glob <- file.path(pq_dir, sprintf("%s%s_*.parquet", prefix, schedule))
+    glob <- file.path(pq_path, sprintf("%s%s_*.parquet", prefix, schedule))
     matches <- Sys.glob(glob)
 
     if (length(matches) == 0L) {
@@ -206,17 +316,12 @@ ffiec_scan_pqs <- function(conn,
     )
 
   } else {
-    glob <- file.path(pq_dir, pq_file)
+    # pq_file could be a base name or a relative path inside pq_path
+    glob <- file.path(pq_path, pq_file)
     matches <- Sys.glob(glob)
 
     if (length(matches) == 0L) {
-      stop(
-        sprintf(
-          "Parquet file not found:\n  %s",
-          glob
-        ),
-        call. = FALSE
-      )
+      stop(sprintf("Parquet file not found:\n  %s", glob), call. = FALSE)
     }
 
     sql <- sprintf(

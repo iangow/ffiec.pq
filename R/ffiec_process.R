@@ -339,8 +339,27 @@ process_zip_por <- function(zipfile, inside_files, out_dir, prefix="") {
 
 #' @keywords internal
 #' @noRd
-resolve_raw_dir <- function(raw_dir, schema) {
-  if (!is.null(raw_dir)) return(raw_dir)
+resolve_dirs <- function(in_dir = NULL, out_dir = NULL,
+                         raw_data_dir = NULL, data_dir = NULL,
+                         schema = "ffiec") {
+
+  in_dir  <- resolve_raw_dir(in_dir = in_dir, raw_data_dir = raw_data_dir, schema = schema)
+  out_dir <- resolve_out_dir(out_dir = out_dir, data_dir = data_dir, schema = schema)
+
+  if (!is.null(in_dir))  in_dir  <- normalizePath(in_dir,  mustWork = TRUE)
+  if (!is.null(out_dir)) out_dir <- normalizePath(out_dir, mustWork = FALSE)
+
+  list(in_dir = in_dir, out_dir = out_dir)
+}
+
+#' @keywords internal
+#' @noRd
+resolve_raw_dir <- function(in_dir = NULL, raw_data_dir = NULL, schema) {
+  if (!is.null(in_dir)) return(in_dir)
+
+  if (!is.null(raw_data_dir)) {
+    if (nzchar(raw_data_dir)) return(file.path(raw_data_dir, schema))
+  }
 
   parent <- Sys.getenv("RAW_DATA_DIR", unset = "")
   if (nzchar(parent)) return(file.path(parent, schema))
@@ -350,8 +369,12 @@ resolve_raw_dir <- function(raw_dir, schema) {
 
 #' @keywords internal
 #' @noRd
-resolve_out_dir <- function(out_dir = NULL, schema) {
+resolve_out_dir <- function(out_dir = NULL, data_dir = NULL, schema) {
   if (!is.null(out_dir)) return(out_dir)
+
+  if (!is.null(data_dir)) {
+    if (nzchar(data_dir)) return(file.path(data_dir, schema))
+  }
 
   parent <- Sys.getenv("DATA_DIR", unset = "")
   if (nzchar(parent)) return(file.path(parent, schema))
@@ -370,11 +393,7 @@ resolve_out_dir <- function(out_dir = NULL, schema) {
 #'   the multi-zip function). Defaults to \code{"ffiec"}.
 #' @keywords internal
 #' @noRd
-process_ffiec_zip <- function(zipfile, out_dir = NULL, schema = "ffiec") {
-  out_dir <- resolve_out_dir(out_dir, schema)
-  if (is.null(out_dir)) stop("Provide `out_dir` or set DATA_DIR.", call. = FALSE)
-
-  out_dir <- normalizePath(out_dir, mustWork = FALSE)
+process_ffiec_zip <- function(zipfile, out_dir = NULL) {
 
   schema_tbl   <- get_ffiec_schema()
   xbrl_to_readr <- default_xbrl_to_readr()
@@ -410,6 +429,7 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL, schema = "ffiec") {
     )
 
   out <- dplyr::bind_rows(sched, por) |>
+    dplyr::select(-.data$date_raw) |>
     dplyr::relocate(
       .data$type, .data$kind, .data$date,
       .data$parquet, .data$zipfile, .data$n_parts, .data$repairs, .data$inner_files
@@ -425,36 +445,97 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL, schema = "ffiec") {
 #' High-level convenience wrapper around
 #' \code{process_ffiec_zip()} and \code{process_ffiec_zips()}.
 #'
-#' @param zipfiles Optional vector of bulk zip file paths.
-#' @param raw_dir Directory containing bulk zip files.
-#' @param out_dir Output directory for Parquet files.
-#' @param schema Subdirectory name under \code{RAW_DATA_DIR} and \code{DATA_DIR}.
-#'   Defaults to \code{"ffiec"}.
+#' @param zipfiles Optional character vector of FFIEC bulk zip file paths.
+#'   If \code{NULL}, zip files are discovered automatically from the resolved
+#'   input directory.
+#' @param in_dir Optional directory containing FFIEC bulk zip files (fully
+#'   qualified). If \code{NULL}, resolved using \code{raw_data_dir} and
+#'   \code{schema}, or the \code{RAW_DATA_DIR} environment variable.
+#' @param out_dir Optional output directory for generated Parquet files (fully
+#'   qualified). If \code{NULL}, resolved using \code{data_dir} and
+#'   \code{schema}, or the \code{DATA_DIR} environment variable.
+#' @param raw_data_dir Optional parent directory containing schema
+#'   subdirectories for raw FFIEC bulk zip files. Ignored if \code{in_dir}
+#'   is provided.
+#' @param data_dir Optional parent directory containing schema subdirectories
+#'   for Parquet output. Ignored if \code{out_dir} is provided.
+#' @param schema Schema name used to resolve input and output directories
+#'   (default \code{"ffiec"}).
+#' @param create_item_pqs Logical; if \code{TRUE}, create or update FFIEC item
+#'   metadata Parquet files as part of processing.
+#' @param keep_process_data Logical; whether to write the processing log
+#'   returned by \code{ffiec_process()} to
+#'   \code{"ffiec_process_data.parquet"} in \code{out_dir}. If \code{NULL},
+#'   defaults to \code{TRUE} when \code{zipfiles} is \code{NULL} and
+#'   \code{FALSE} when \code{zipfiles} is supplied.
 #'
 #' @return A tibble describing written Parquet files.
 #' @export
-ffiec_process <- function(zipfiles = NULL, raw_dir = NULL, out_dir = NULL, schema = "ffiec") {
-  out_dir <- resolve_out_dir(out_dir, schema)
-  if (is.null(out_dir)) stop("Provide `out_dir` or set DATA_DIR.", call. = FALSE)
-  out_dir <- normalizePath(out_dir, mustWork = FALSE)
+ffiec_process <- function(zipfiles = NULL,
+                          in_dir = NULL, out_dir = NULL,
+                          raw_data_dir = NULL, data_dir = NULL,
+                          schema = "ffiec",
+                          create_item_pqs = TRUE,
+                          keep_process_data = NULL) {
+
+  dirs <- resolve_dirs(
+    in_dir = in_dir, out_dir = out_dir,
+    raw_data_dir = raw_data_dir, data_dir = data_dir,
+    schema = schema
+  )
+  in_dir  <- dirs$in_dir
+  out_dir <- dirs$out_dir
+
+  if (is.null(out_dir)) {
+    stop("Provide `out_dir`, or `data_dir`, or set DATA_DIR.", call. = FALSE)
+  }
+
+  # Only required if we need to discover zipfiles
+  if (is.null(zipfiles) && is.null(in_dir)) {
+    stop("Provide `zipfiles`, or `in_dir`/`raw_data_dir`, or set RAW_DATA_DIR.", call. = FALSE)
+  }
+
+  if (is.null(keep_process_data)) {
+    keep_process_data <- is.null(zipfiles)
+  }
 
   if (is.null(zipfiles)) {
-    raw_dir <- resolve_raw_dir(raw_dir, schema)
-    if (is.null(raw_dir)) {
-      stop("Provide `zipfiles`, or provide `raw_dir`, or set RAW_DATA_DIR.", call. = FALSE)
-    }
+    zipfiles <- ffiec_list_zips(in_dir = in_dir)$zipfile
 
-    zipfiles <- ffiec_list_zips(raw_dir = raw_dir)$zipfile
+    keep <- stringr::str_detect(
+      basename(zipfiles),
+      stringr::regex("^FFIEC CDR Call Bulk All Schedules \\d{8}\\.zip$", ignore_case = TRUE)
+    )
+
+    zipfiles <- zipfiles[keep]
+
+    if (length(zipfiles) == 0L) {
+      stop("No FFIEC bulk zip files found in the resolved input directory.", call. = FALSE)
+    }
   }
 
   zipfiles <- normalizePath(zipfiles, mustWork = TRUE)
 
+  if (isTRUE(create_item_pqs)) {
+    ffiec_create_item_pqs(out_dir = out_dir, overwrite = TRUE)
+  }
+
   out <- purrr::map_dfr(
     zipfiles,
     process_ffiec_zip,
-    out_dir = out_dir,
-    schema = schema
+    out_dir = out_dir
   )
+
+  if (isTRUE(create_item_pqs)) {
+    ffiec_create_item_schedules_pq(out_dir = out_dir, overwrite = TRUE)
+  }
+
+  if (isTRUE(keep_process_data)) {
+    if (!requireNamespace("arrow", quietly = TRUE)) {
+      stop("Package 'arrow' is required to write Parquet files.", call. = FALSE)
+    }
+    arrow::write_parquet(out, file.path(out_dir, "ffiec_process_data.parquet"))
+  }
 
   attr(out, "out_dir") <- out_dir
   out
@@ -462,27 +543,41 @@ ffiec_process <- function(zipfiles = NULL, raw_dir = NULL, out_dir = NULL, schem
 
 #' List generated FFIEC Parquet files
 #'
-#' Lists Parquet files produced by \code{ffiec_process()} and returns
-#' their filenames, full paths, and a simplified pattern with the date removed.
+#' Lists Parquet files produced by \code{ffiec_process()} and returns their
+#' filenames, full paths, and inferred FFIEC schedule identifiers.
 #'
-#' @param out_dir Directory containing FFIEC Parquet files.
-#'   If \code{NULL}, resolved via \code{DATA_DIR} and \code{schema}.
+#' @param out_dir Optional directory containing FFIEC Parquet files. If \code{NULL},
+#'   the directory is resolved using \code{data_dir} and \code{schema}, or the
+#'   \code{DATA_DIR} environment variable.
+#' @param data_dir Optional parent directory containing schema subdirectories.
+#'   Ignored if \code{out_dir} is provided.
 #' @param schema Character scalar identifying the schema subdirectory
 #'   (default \code{"ffiec"}).
-#' @param prefix Prefix appended to Parquet file names.
+#' @param prefix Optional prefix prepended to Parquet file names
+#'   (default \code{""}).
 #'
 #' @return A tibble with one row per Parquet file and columns:
 #' \describe{
 #'   \item{base_name}{File name without directory.}
 #'   \item{full_name}{Full path to the Parquet file.}
-#'   \item{pattern}{File name with the YYYYMMDD date removed.}
+#'   \item{schedule}{Inferred FFIEC schedule identifier extracted from the file name.}
+#' }
+#'
+#' @examples
+#' \dontrun{
+#' # List FFIEC Parquet files using DATA_DIR/ffiec
+#' ffiec_list_pqs()
+#'
+#' # List files from an explicit directory
+#' ffiec_list_pqs(out_dir = "/data/parquet/ffiec")
 #' }
 #'
 #' @export
-ffiec_list_pqs <- function(out_dir = NULL, schema = "ffiec", prefix="") {
-  out_dir <- resolve_out_dir(out_dir, schema)
+ffiec_list_pqs <- function(out_dir = NULL, data_dir = NULL,
+                           schema = "ffiec", prefix = "") {
+  out_dir <- resolve_out_dir(out_dir = out_dir, data_dir = data_dir, schema = schema)
   if (is.null(out_dir)) {
-    stop("Provide `out_dir` or set DATA_DIR.", call. = FALSE)
+    stop("Provide `out_dir`, or `data_dir`, or set DATA_DIR.", call. = FALSE)
   }
 
   out_dir <- normalizePath(out_dir, mustWork = FALSE)
@@ -496,9 +591,9 @@ ffiec_list_pqs <- function(out_dir = NULL, schema = "ffiec", prefix="") {
   base_name <- basename(res)
 
   tibble::tibble(
-    base_name  = base_name,
-    full_name  = res,
-    schedule   = extract_schedule(base_name, prefix)
+    base_name = base_name,
+    full_name = res,
+    schedule  = extract_schedule(base_name, prefix)
   )
 }
 

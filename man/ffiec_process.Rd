@@ -6,20 +6,46 @@
 \usage{
 ffiec_process(
   zipfiles = NULL,
-  raw_dir = NULL,
+  in_dir = NULL,
   out_dir = NULL,
-  schema = "ffiec"
+  raw_data_dir = NULL,
+  data_dir = NULL,
+  schema = "ffiec",
+  create_item_pqs = TRUE,
+  keep_process_data = NULL
 )
 }
 \arguments{
-\item{zipfiles}{Optional vector of bulk zip file paths.}
+\item{zipfiles}{Optional character vector of FFIEC bulk zip file paths.
+If \code{NULL}, zip files are discovered automatically from the resolved
+input directory.}
 
-\item{raw_dir}{Directory containing bulk zip files.}
+\item{in_dir}{Optional directory containing FFIEC bulk zip files (fully
+qualified). If \code{NULL}, resolved using \code{raw_data_dir} and
+\code{schema}, or the \code{RAW_DATA_DIR} environment variable.}
 
-\item{out_dir}{Output directory for Parquet files.}
+\item{out_dir}{Optional output directory for generated Parquet files (fully
+qualified). If \code{NULL}, resolved using \code{data_dir} and
+\code{schema}, or the \code{DATA_DIR} environment variable.}
 
-\item{schema}{Subdirectory name under \code{RAW_DATA_DIR} and \code{DATA_DIR}.
-Defaults to \code{"ffiec"}.}
+\item{raw_data_dir}{Optional parent directory containing schema
+subdirectories for raw FFIEC bulk zip files. Ignored if \code{in_dir}
+is provided.}
+
+\item{data_dir}{Optional parent directory containing schema subdirectories
+for Parquet output. Ignored if \code{out_dir} is provided.}
+
+\item{schema}{Schema name used to resolve input and output directories
+(default \code{"ffiec"}).}
+
+\item{create_item_pqs}{Logical; if \code{TRUE}, create or update FFIEC item
+metadata Parquet files as part of processing.}
+
+\item{keep_process_data}{Logical; whether to write the processing log
+returned by \code{ffiec_process()} to
+\code{"ffiec_process_data.parquet"} in \code{out_dir}. If \code{NULL},
+defaults to \code{TRUE} when \code{zipfiles} is \code{NULL} and
+\code{FALSE} when \code{zipfiles} is supplied.}
 }
 \value{
 A tibble describing written Parquet files.

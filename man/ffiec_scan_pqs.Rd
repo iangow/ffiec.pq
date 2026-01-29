@@ -18,17 +18,18 @@ ffiec_scan_pqs(
 \item{conn}{A valid DuckDB connection.}
 
 \item{schedule}{Optional character scalar giving the FFIEC schedule
-name (e.g. \code{"rc"}, \code{"rci"}, \code{"rcb"}. All matching Parquet files
+name (e.g. \code{"rc"}, \code{"rci"}, \code{"rcb"}). All matching Parquet files
 of the form \code{\{prefix\}\{schedule\}_YYYYMMDD.parquet} will be scanned.}
 
 \item{pq_file}{Optional character scalar giving a specific Parquet
-filename or glob pattern relative to `pq_dir`.}
+filename or glob pattern.}
 
-\item{pq_dir}{Directory containing FFIEC Parquet files. If `NULL`,
-defaults to the resolved output directory for `schema`.}
+\item{pq_dir}{Optional directory used to locate Parquet files. The
+interpretation of this argument depends on \code{schema}; see Details.}
 
 \item{schema}{Schema name used to resolve default directories
-(default \code{"ffiec"}).}
+(default \code{"ffiec"}). Set to \code{NULL} to treat \code{pq_dir}
+as the final Parquet directory.}
 
 \item{prefix}{Optional filename prefix used when the Parquet files
 were created (default \code{""}).}
@@ -38,13 +39,13 @@ name when scanning multiple files (passed to DuckDB's
 \code{read_parquet()}). Default is \code{TRUE}.}
 }
 \value{
-A lazy `tbl` backed by DuckDB.
+A lazy \code{tbl} backed by DuckDB.
 }
 \description{
 Create a lazy \code{tbl} backed by DuckDB by scanning one or more FFIEC
-Parquet files. Files are selected either by schedule name (using a
-glob pattern) or by an explicit Parquet filename. No data is read
-eagerly; evaluation occurs only when the result is collected.
+Parquet files. Files may be selected either by FFIEC schedule name
+(using a glob pattern) or by an explicit Parquet filename. No data is
+read eagerly; evaluation occurs only when the result is collected.
 }
 \details{
 This function is intended for use with Parquet files produced by
@@ -52,11 +53,33 @@ This function is intended for use with Parquet files produced by
 disk before constructing the DuckDB query.
 
 
-Exactly one of `schedule` or `pq_file` must be supplied.
+Exactly one of \code{schedule} or \code{pq_file} must be supplied.
 
-When `schedule` is used, files are located using a glob pattern:
-\code{\{prefix\}\{schedule\}_*.parquet}. When \code{pq_file} is used, the value is
-treated as a filename or glob pattern relative to \code{pq_dir}.
+\strong{Directory resolution}
+
+Parquet files are located using the following rules:
+
+\itemize{
+  \item If \code{schema} is non-\code{NULL} (the default), Parquet files are
+  expected to live in a subdirectory named \code{schema}. In this case,
+  \code{pq_dir} is interpreted as the parent directory, and files are read
+  from \code{file.path(pq_dir, schema)}. If \code{pq_dir} is \code{NULL},
+  the environment variable \code{DATA_DIR} is used as the parent directory.
+
+  \item If \code{schema = NULL}, \code{pq_dir} is interpreted as the final
+  directory containing Parquet files directly (no schema subdirectory is
+  appended). If \code{pq_dir} is \code{NULL}, \code{DATA_DIR} is used as the
+  Parquet directory.
+
+  \item If \code{pq_dir} is \code{NULL} and \code{DATA_DIR} is unset, and
+  \code{pq_file} is supplied, \code{pq_file} may be a fully qualified path
+  to an existing Parquet file.
+}
+
+When \code{schedule} is used, files are located using a glob pattern:
+\code{\{prefix\}\{schedule\}_*.parquet}. When \code{pq_file} is used, the value
+is treated as a filename or glob pattern relative to the resolved Parquet
+directory (unless it is a full path as described above).
 
 A fast filesystem check is performed using \code{Sys.glob()}. If no files
 match, the function errors before issuing any DuckDB query.
@@ -65,11 +88,20 @@ match, the function errors before issuing any DuckDB query.
 \dontrun{
 con <- DBI::dbConnect(duckdb::duckdb())
 
-# Scan all RC schedule files
+# Scan all RC schedule files using DATA_DIR/ffiec
 rc <- ffiec_scan_pqs(con, schedule = "rc")
 
-# Scan a single Parquet file
+# Scan from a specific parent directory
+rc <- ffiec_scan_pqs(con, schedule = "rc", pq_dir = "/data/parquet")
+
+# Treat pq_dir as the final directory (no schema subdir)
+rc <- ffiec_scan_pqs(con, schedule = "rc", pq_dir = "/data/ffiec", schema = NULL)
+
+# Scan a single Parquet file by name using DATA_DIR/ffiec
 por <- ffiec_scan_pqs(con, pq_file = "por_20231231.parquet")
+
+# Scan a Parquet file via full path
+por <- ffiec_scan_pqs(con, pq_file = "/tmp/por_20231231.parquet")
 
 # Work lazily
 rc |> dplyr::count(date)

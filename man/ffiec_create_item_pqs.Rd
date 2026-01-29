@@ -4,34 +4,32 @@
 \alias{ffiec_create_item_pqs}
 \title{Create FFIEC item Parquet files}
 \usage{
-ffiec_create_item_pqs(out_dir = NULL, schema = "ffiec", overwrite = FALSE)
+ffiec_create_item_pqs(
+  out_dir = NULL,
+  data_dir = NULL,
+  schema = "ffiec",
+  overwrite = FALSE
+)
 }
 \arguments{
 \item{out_dir}{Optional output directory. If \code{NULL}, the directory is
-resolved using \code{schema} and environment variables, as in
-\code{\link{ffiec_list_pqs}}.}
+resolved using \code{data_dir} and \code{schema}, or the \code{DATA_DIR}
+environment variable.}
 
-\item{schema}{Schema name passed to \code{resolve_out_dir()}.}
+\item{data_dir}{Optional parent directory containing schema subdirectories.
+Ignored if \code{out_dir} is provided.}
+
+\item{schema}{Schema name used to resolve the Parquet directory
+(default \code{"ffiec"}).}
 
 \item{overwrite}{Logical; whether to overwrite existing files.}
 }
 \value{
-A tibble with one row per file written and columns \code{base_name},
-\code{full_name}, \code{schedule}, and \code{written}.
+A tibble with one row per file written and columns
+  \code{base_name}, \code{full_name}, \code{schedule}, and \code{written}.
 }
 \description{
-Writes FFIEC item reference tables shipped with the package as Parquet files
-into the FFIEC Parquet output directory resolved in the same way as
-\code{\link{ffiec_list_pqs}}.
-}
-\details{
-This is intended to make FFIEC item metadata available to non-R workflows
-(e.g., Python, DuckDB, Polars) using the same directory layout as the main
-FFIEC Parquet datasets.
-}
-\examples{
-\dontrun{
-ffiec_create_item_pqs()
-}
-
+Writes FFIEC item reference tables as Parquet files into the FFIEC
+Parquet output directory, resolved using the same rules as
+[ffiec_list_pqs()].
 }
