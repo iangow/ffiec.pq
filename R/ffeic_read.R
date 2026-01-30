@@ -35,11 +35,20 @@ get_header_from_zip_tsv <- function(zipfile, inner_file) {
 #' @param tolerance Integer scalar: how much to relax the minimum field-count
 #'   threshold (default 10). Larger values are more aggressive about treating
 #'   digit-leading lines as continuations rather than new rows.
+#' @param row_start_re A regular expression used to identify lines that
+#'   plausibly begin a new TSV record. Lines matching this pattern and having
+#'   at least `expected_cols - tolerance` tab-separated fields are treated as
+#'   the start of a new row; other lines are appended to the previous row to
+#'   repair embedded newlines within fields. The default (`"^\\\d+\\\t"`)
+#'   assumes the first column is a numeric identifier followed by a tab.
 #'
 #' @return Character vector of repaired lines.
 #' @keywords internal
 #' @noRd
-repair_ffiec_tsv_lines <- function(lines, expected_cols, tolerance = 10L) {
+repair_ffiec_tsv_lines <- function(lines,
+                                   expected_cols,
+                                   tolerance = 10L,
+                                   row_start_re = "^\\d+\\t") {
   stopifnot(
     is.numeric(expected_cols), length(expected_cols) == 1L, expected_cols >= 1,
     is.numeric(tolerance), length(tolerance) == 1L, tolerance >= 0
@@ -47,12 +56,9 @@ repair_ffiec_tsv_lines <- function(lines, expected_cols, tolerance = 10L) {
 
   n_fields <- function(x) 1L + stringr::str_count(x, "\t")
 
-  # keep non-empty lines
   lines <- lines[nzchar(lines)]
   if (length(lines) == 0L) return(character(0))
 
-  # Minimum fields required to accept "digits+tab" as a true new record.
-  # This is the key guard against "1540\t\tDetailed explanation..." being misread as a new row.
   min_fields_new_row <- max(1L, as.integer(expected_cols) - as.integer(tolerance))
 
   out <- character(0)
@@ -63,7 +69,7 @@ repair_ffiec_tsv_lines <- function(lines, expected_cols, tolerance = 10L) {
       next
     }
 
-    looks_like_row_start <- grepl("^\\d+\\t", ln)
+    looks_like_row_start <- grepl(row_start_re, ln)
     fields <- n_fields(ln)
 
     if (looks_like_row_start && fields >= min_fields_new_row) {
@@ -88,35 +94,10 @@ repair_ffiec_tsv_lines <- function(lines, expected_cols, tolerance = 10L) {
 #' @noRd
 read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
 
-  # ---- helper: empty tibble with correct columns ----
   empty_tbl <- function(cols) {
     tibble::as_tibble(stats::setNames(replicate(length(cols), logical(0), simplify = FALSE), cols))
   }
 
-  # ---- helper: collapse overflow fields into last column (replace extra tabs) ----
-  collapse_overflow_into_last <- function(lines, expected_cols, sep = " ") {
-    stopifnot(is.numeric(expected_cols), length(expected_cols) == 1L, expected_cols >= 1L)
-
-    n_fields <- function(x) 1L + stringr::str_count(x, "\t")
-    is_data  <- grepl("^\\d+\\t", lines)
-    too_many <- is_data & (n_fields(lines) > expected_cols)
-
-    if (!any(too_many)) return(lines)
-
-    fix_one <- function(ln) {
-      parts <- strsplit(ln, "\t", fixed = TRUE)[[1]]
-      if (length(parts) <= expected_cols) return(ln)
-      head <- if (expected_cols > 1L) parts[seq_len(expected_cols - 1L)] else character(0)
-      tail <- parts[expected_cols:length(parts)]
-      last <- paste(tail, collapse = sep)  # NOT "\t"
-      paste(c(head, last), collapse = "\t")
-    }
-
-    lines[too_many] <- vapply(lines[too_many], fix_one, character(1))
-    lines
-  }
-
-  # ---- helper: attach repairs attribute consistently ----
   attach_repairs <- function(df, repairs) {
     repairs <- as.character(repairs)
     repairs <- repairs[!is.na(repairs) & nzchar(repairs)]
@@ -124,15 +105,12 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     df
   }
 
-  # track repairs across whichever path we end up using
-  repairs_applied <- character(0)
   debug <- isTRUE(getOption("ffiec.pq.debug", FALSE))
 
   # ---- header ----
   raw_cols <- get_header_from_zip_tsv(zipfile, inner_file)
   cols <- clean_cols(raw_cols)
   expected_cols <- length(cols)
-
   if (!is.numeric(expected_cols) || expected_cols < 1L) {
     stop("Header parse produced 0 columns for inner_file: ", inner_file, call. = FALSE)
   }
@@ -140,193 +118,88 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
   # ---- colspec ----
   ffiec_col_overrides <- default_ffiec_col_overrides()
   colspec <- make_colspec(
-    cols,
-    schema,
-    xbrl_to_readr,
+    cols, schema, xbrl_to_readr,
     ffiec_col_overrides = ffiec_col_overrides
   )
 
-  # ---- pass 1: fast path (no repairs) ----
-  fast_warnings <- character(0)
+  # ---- FAST PATH ----
+  fast_input <- list(kind = "connection", con_open = function() unz(zipfile, inner_file))
 
-  fast_try <- try({
-    con <- unz(zipfile, inner_file)
-    on.exit(try(close(con), silent = TRUE), add = TRUE)
-
-    df1 <- withCallingHandlers(
-      readr::read_tsv(
-        con,
-        skip = 2,
-        quote = "",
-        col_names = cols,
-        na = c("", "NA", "CONF"),
-        col_types = colspec,
-        progress = FALSE,
-        show_col_types = FALSE
-      ),
-      warning = function(w) {
-        fast_warnings <<- c(fast_warnings, conditionMessage(w))
-        invokeRestart("muffleWarning")
-      }
-    )
-
-    df1
-  }, silent = TRUE)
-
-  # Optional: surface fast warnings in debug mode
-  if (debug && length(fast_warnings) > 0L) {
-    message("Fast-path warnings in ", inner_file, ":")
-    for (msg in unique(fast_warnings)) message("  - ", msg)
-  }
-
-  if (!inherits(fast_try, "try-error")) {
-    df1 <- fast_try
-
-    # IMPORTANT: capture parse problems BEFORE any dplyr mutate/across
-    probs1 <- readr::problems(df1)
-
-    # Conservative trigger: any fast-path warning => fall back
-    warn_trigger <- length(fast_warnings) > 0L
-
-    # Problems trigger: actual recorded parsing problems
-    prob_trigger <- nrow(probs1) > 0L
-
-    if (!warn_trigger && !prob_trigger) {
-      # Apply date parsing overrides (cheap; keep it on fast path)
-      date_cols <- names(ffiec_col_overrides)[ffiec_col_overrides == "D"]
-
-      res_dates <- apply_ffiec_date_overrides(
-        df = df1,
-        date_cols = date_cols,
-        zipfile = zipfile,
-        inner_file = inner_file,
-        debug = debug
-      )
-
-      df1 <- res_dates$df
-      repairs_applied <- union(repairs_applied, res_dates$repairs)
-
-      return(attach_repairs(df1, repairs_applied))
-    }
-
-    if (debug) {
-      message("Fast path flagged issues in ", inner_file, ". Falling back to repairs.")
-      if (warn_trigger) {
-        message("  Reason: fast-path warnings (", length(unique(fast_warnings)), ").")
-      }
-      if (prob_trigger) {
-        message("  Reason: readr problems (", nrow(probs1), ").")
-        print(probs1)
-      }
-    }
-  } else {
-    if (debug) {
-      message("readr error in fast path for ", inner_file, ". Falling back to repairs.")
-      message(conditionMessage(attr(fast_try, "condition")))
-    }
-  }
-
-  # ---- pass 2: slow path (read lines → repair → parse) ----
-  repairs_applied <- character(0)  # reset: only count actual repairs on slow path
-
-  con2 <- unz(zipfile, inner_file)
-  on.exit(try(close(con2), silent = TRUE), add = TRUE)
-
-  lines <- readLines(con2, warn = FALSE)
-
-  if (length(lines) == 0L) return(attach_repairs(empty_tbl(cols), repairs_applied))
-
-  lines <- lines[nzchar(lines)]
-  if (length(lines) == 0L) return(attach_repairs(empty_tbl(cols), repairs_applied))
-
-  header_lines <- if (length(lines) >= 2L) lines[1:2] else lines
-  data_lines   <- if (length(lines) > 2L)  lines[-(1:2)] else character(0)
-
-  # 1) embedded newlines
-  if (length(data_lines) > 0L) {
-    before <- data_lines
-    data_lines <- repair_ffiec_tsv_lines(data_lines, expected_cols = expected_cols, tolerance = 10L)
-    if (!identical(data_lines, before)) {
-      repairs_applied <- c(repairs_applied, "embedded-newline")
-      if (debug) message("Applied embedded-newline repair for: ", inner_file)
-    }
-  }
-
-  # 2) extra trailing tabs
-  if (length(data_lines) > 0L) {
-    before <- data_lines
-    data_lines <- trim_extra_trailing_tabs(data_lines, expected_cols = expected_cols)
-    if (!identical(data_lines, before)) {
-      repairs_applied <- c(repairs_applied, "trim-trailing-tabs")
-    }
-  }
-
-  # 3) overflow tabs into last text column (only if last col is character)
-  if (length(data_lines) > 0L) {
-    last_nm <- cols[[length(cols)]]
-    last_is_char <- FALSE
-    if (!is.null(colspec$cols) && !is.null(colspec$cols[[last_nm]])) {
-      last_is_char <- inherits(colspec$cols[[last_nm]], "collector_character")
-    }
-
-    if (last_is_char) {
-      n_fields <- 1L + stringr::str_count(data_lines, "\t")
-      if (any(n_fields > expected_cols, na.rm = TRUE)) {
-        before <- data_lines
-        data_lines <- collapse_overflow_into_last(data_lines, expected_cols = expected_cols, sep = " ")
-        if (!identical(data_lines, before)) {
-          repairs_applied <- c(repairs_applied, "overflow-tabs")
-          if (debug) message("Collapsed overflow tabs into last column for: ", inner_file)
-        }
-      }
-    }
-  }
-
-  tmp <- tempfile(fileext = ".tsv")
-  on.exit(try(unlink(tmp), silent = TRUE), add = TRUE)
-
-  writeLines(c(header_lines, data_lines), tmp, useBytes = TRUE)
-
-  df2 <- readr::read_tsv(
-    tmp,
-    skip = 2,
+  fast <- ffiec_read_tsv_strict(
+    prepped_input = fast_input,
+    cols = cols,
+    colspec = colspec,
+    skip = 2L,
     quote = "",
-    col_names = cols,
     na = c("", "NA", "CONF"),
-    col_types = colspec,
     progress = FALSE,
     show_col_types = FALSE
   )
 
-  # date overrides
-  date_cols <- names(ffiec_col_overrides)[ffiec_col_overrides == "D"]
-
-  res_dates <- apply_ffiec_date_overrides(
-    df = df2,
-    date_cols = date_cols,
+  fin_fast <- ffiec_finalize_if_clean(
+    df = fast$df,
+    ok = fast$ok,
+    warnings = fast$warnings,
+    problems = fast$problems,
+    ffiec_col_overrides = ffiec_col_overrides,
     zipfile = zipfile,
     inner_file = inner_file,
+    repairs_applied = character(0),
     debug = debug
   )
 
-  df2 <- res_dates$df
-  repairs_applied <- union(repairs_applied, res_dates$repairs)
-
-  # debug on slow path
-  if (debug) {
-    probs2 <- readr::problems(df2)
-    if (nrow(probs2) > 0) {
-      message("Parsing issues in ", inner_file, " (after repairs).")
-      print(probs2)
-      r0 <- probs2$row[[1]]
-      lo <- max(1L, r0 - 3L)
-      hi <- min(length(data_lines), r0 + 3L)
-      message("Nearby repaired data lines (slow path):")
-      print(data_lines[lo:hi])
-    }
+  if (isTRUE(fin_fast$ok)) {
+    return(attach_repairs(fin_fast$df, fin_fast$repairs))
   }
 
-  attach_repairs(df2, repairs_applied)
+  if (debug) {
+    message("Falling back to repairs for ", inner_file)
+    if (length(fast$warnings)) message("  fast warnings: ", length(unique(fast$warnings)))
+    if (nrow(fast$problems)) message("  fast problems: ", nrow(fast$problems))
+  }
+
+  repairs_applied <- "fallback-slow-path"
+
+  # ---- SLOW PATH: embedded-newline FIRST ----
+  prep <- ffiec_prepare_tsv_input(
+    zipfile = zipfile,
+    inner_file = inner_file,
+    skip = 2L,
+    expected_cols = expected_cols,
+    tolerance = 10L,
+    row_start_re = "^\\d+\\t"
+  )
+
+  slow <- ffiec_read_tsv_strict(
+    prepped_input = prep$input,
+    cols = cols,
+    colspec = colspec,
+    skip = 2L,
+    quote = "",
+    na = c("", "NA", "CONF"),
+    progress = FALSE,
+    show_col_types = FALSE
+  )
+
+  fin_slow <- ffiec_finalize_if_clean(
+    df = slow$df,
+    ok = slow$ok,
+    warnings = slow$warnings,
+    problems = slow$problems,
+    ffiec_col_overrides = ffiec_col_overrides,
+    zipfile = zipfile,
+    inner_file = inner_file,
+    repairs_applied = union(repairs_applied, prep$repairs),
+    debug = debug
+  )
+
+  # If slow read failed outright, return an empty tibble (or propagate error)
+  if (is.null(fin_slow$df)) {
+    if (debug && !is.null(slow$error)) message("Slow path failed for ", inner_file)
+    return(attach_repairs(empty_tbl(cols), union(prep$repairs, "read-failed")))
+  }
+
+  attach_repairs(fin_slow$df, fin_slow$repairs)
 }
 
 #' Apply FFIEC date overrides, recording invalid-date repairs
@@ -745,4 +618,369 @@ fix_pure_percent_cols <- function(df, schema) {
         x
       }
     }))
+}
+
+#' Prepare a robust TSV input source from a Call Report file inside a ZIP
+#'
+#' @description
+#' `ffiec_prepare_tsv_input()` constructs an input object suitable for
+#' `readr::read_tsv()` from an FFIEC Call Report schedule stored in a ZIP file.
+#' It is designed to address a common corruption pattern in these files:
+#' **illegal embedded newlines** that split a logical record across multiple
+#' physical lines.
+#'
+#' The function reads the file once as raw lines, applies an embedded-newline
+#' repair on the **data lines only**, and then decides whether to adopt the
+#' repaired text based on a conservative structural check (field-count validity).
+#'
+#' - If the repair does **not** improve structural validity, the function returns
+#'   a connection-based input (`unz()`), leaving the original bytes untouched.
+#' - If the repair **does** improve structural validity, the function returns a
+#'   text-based input containing the original header lines plus the repaired data
+#'   lines.
+#'
+#' @param zipfile Character scalar. Path to a ZIP file.
+#' @param inner_file Character scalar. The path/name of the TSV file within
+#'   `zipfile` (as understood by [unz()]).
+#' @param skip Integer scalar. Number of initial lines that `readr::read_tsv()`
+#'   should skip. This is typically `2` for FFIEC schedule extracts (two-line
+#'   header). The returned text input retains these header lines so that the same
+#'   `skip` can be used for both connection and text inputs.
+#' @param expected_cols Integer scalar. Expected number of columns (fields) in
+#'   the schedule (typically `length(cols)` from the parsed header).
+#' @param tolerance Integer scalar. Maximum number of line-stitching iterations
+#'   (or similar safeguard) forwarded to [repair_ffiec_tsv_lines()]. Used to
+#'   prevent runaway repairs on severely corrupted input.
+#' @param row_start_re Character scalar. Regular expression identifying “data”
+#'   lines (default matches lines beginning with a numeric ID followed by a tab).
+#'   This is used to restrict structural checks to true record lines.
+#'
+#' @return A list with two elements:
+#' \describe{
+#'   \item{input}{A list describing the prepared input, with either:
+#'     \describe{
+#'       \item{kind = "connection"}{Includes `con_open`, a function that returns a
+#'         fresh [unz()] connection each time it is called.}
+#'       \item{kind = "text"}{Includes `txt`, a single character string containing
+#'         the full TSV text (header + repaired data) separated by `\\n`.}
+#'     }
+#'   }
+#'   \item{repairs}{A character vector of repairs applied. Currently either empty
+#'     (`character(0)`) or `"embedded-newline"` when repaired text is adopted.}
+#' }
+#'
+#' @details
+#' **Structural validity gate.** The embedded-newline repair is adopted only if it
+#' reduces the number of “bad” data lines, where a line is “bad” if it appears to
+#' be a data record (`row_start_re`) but does not have exactly `expected_cols`
+#' fields (i.e., `str_count("\\t") + 1 != expected_cols`). This prevents
+#' downstream parse/type errors caused by applying delimiter-sensitive operations
+#' (e.g., trimming tabs) before record boundaries are stabilized.
+#'
+#' **Line ending normalization.** Stray carriage returns (`\\r`) are removed from
+#' line ends before analysis and repair.
+#'
+#' @seealso [repair_ffiec_tsv_lines()] for the embedded-newline stitching logic;
+#'   [ffiec_read_tsv_strict()] for parsing and diagnostics using the prepared input.
+#'
+#' @keywords internal
+ffiec_prepare_tsv_input <- function(zipfile,
+                                    inner_file,
+                                    skip = 2L,
+                                    expected_cols,
+                                    tolerance = 10L,
+                                    row_start_re = "^\\d+\\t") {
+  con_open <- function() unz(zipfile, inner_file)
+
+  con <- unz(zipfile, inner_file)
+  on.exit(try(close(con), silent = TRUE), add = TRUE)
+  lines <- readLines(con, warn = FALSE)
+
+  # normalize stray CR
+  lines <- sub("\r$", "", lines)
+
+  header_lines <- if (skip > 0L) utils::head(lines, skip) else character(0)
+  data_lines   <- if (length(lines) > skip) lines[(skip + 1L):length(lines)] else character(0)
+
+  if (length(data_lines) == 0L) {
+    return(list(input = list(kind = "connection", con_open = con_open),
+                repairs = character(0)))
+  }
+
+  fixed_data <- repair_ffiec_tsv_lines(
+    lines = data_lines,
+    expected_cols = expected_cols,
+    tolerance = tolerance,
+    row_start_re = row_start_re
+  )
+
+  n_bad <- function(x) {
+    x <- sub("\r$", "", x)
+    is_data <- grepl(row_start_re, x)
+    x <- x[is_data & nzchar(x)]
+    if (!length(x)) return(0L)
+    tabs <- stringr::str_count(x, "\t")
+    sum((tabs + 1L) != expected_cols)
+  }
+
+  before_bad <- n_bad(data_lines)
+  after_bad  <- n_bad(fixed_data)
+
+  repaired <- after_bad < before_bad
+
+  if (!repaired) {
+    list(
+      input = list(kind = "connection", con_open = con_open),
+      repairs = character(0)
+    )
+  } else {
+    list(
+      input = list(kind = "text", txt = paste(c(header_lines, fixed_data), collapse = "\n")),
+      repairs = "embedded-newline"
+    )
+  }
+}
+#' Read a prepared FFIEC TSV input with strict diagnostics
+#'
+#' @description
+#' `ffiec_read_tsv_strict()` is a thin wrapper around [readr::read_tsv()] that
+#' provides **strict** success criteria and consistent behavior across input
+#' types produced by [ffiec_prepare_tsv_input()].
+#'
+#' It supports two input modes:
+#' \describe{
+#'   \item{Connection input}{A `con_open()` factory that returns a fresh connection
+#'   (typically from [unz()]).}
+#'   \item{Text input}{A single character string containing the full TSV text.}
+#' }
+#'
+#' The function captures and muffles warnings, collects parsing problems via
+#' [readr::problems()], and reports whether the read is “clean” (no warnings and
+#' no recorded problems).
+#'
+#' @param prepped_input A list describing the prepared input. Must include
+#'   `kind`, and either:
+#'   \describe{
+#'     \item{kind = "connection"}{A `con_open` function returning a fresh
+#'       connection each call.}
+#'     \item{kind = "text"}{A `txt` character string containing TSV content.}
+#'   }
+#' @param cols Character vector of column names passed to `col_names`.
+#' @param colspec A readr column specification passed to `col_types`.
+#' @param skip Integer scalar. Number of initial lines to skip (passed to
+#'   [readr::read_tsv()] for both input modes to ensure identical behavior).
+#' @param quote Character scalar. Quoting character(s) passed to
+#'   [readr::read_tsv()]. For FFIEC schedule extracts this is typically `""`
+#'   (no quoting).
+#' @param na Character vector. Values to treat as missing (passed to `na`).
+#' @param progress Logical. Whether readr should show progress.
+#' @param show_col_types Logical. Whether readr should print inferred column types.
+#'
+#' @return A list with elements:
+#' \describe{
+#'   \item{ok}{Logical. `TRUE` iff no warnings were captured and
+#'     `readr::problems(df)` has zero rows.}
+#'   \item{df}{A tibble on success; `NULL` on hard error.}
+#'   \item{warnings}{Character vector of captured warning messages (possibly empty).}
+#'   \item{problems}{A tibble of parsing problems from [readr::problems()]. Empty
+#'     tibble if none or if a hard error occurred before a data frame existed.}
+#'   \item{error}{Present only on hard error (`try-error` object).}
+#' }
+#'
+#' @details
+#' - Warnings are captured and muffled so that callers can decide whether they
+#'   should trigger a fallback/repair strategy.
+#' - Connections opened via `prepped_input$con_open()` are always closed on exit.
+#' - `skip` is applied in both connection and text modes to keep the parse
+#'   contract identical regardless of where the input came from.
+#'
+#' @seealso [ffiec_prepare_tsv_input()] to construct `prepped_input`;
+#'   [readr::read_tsv()] for the underlying parser.
+#'
+#' @keywords internal
+ffiec_read_tsv_strict <- function(prepped_input,
+                                  cols,
+                                  colspec,
+                                  skip = 2L,
+                                  quote = "",
+                                  na = c("", "NA", "CONF"),
+                                  progress = FALSE,
+                                  show_col_types = FALSE) {
+  warn <- character(0)
+
+  capture_warnings <- function(expr) {
+    withCallingHandlers(
+      expr,
+      warning = function(w) {
+        warn <<- c(warn, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }
+    )
+  }
+
+  out <- try({
+    df <- if (prepped_input$kind == "connection") {
+      con <- prepped_input$con_open()
+      on.exit(try(close(con), silent = TRUE), add = TRUE)
+
+      capture_warnings(
+        readr::read_tsv(
+          con,
+          skip = skip,
+          quote = quote,
+          col_names = cols,
+          na = na,
+          col_types = colspec,
+          progress = progress,
+          show_col_types = show_col_types
+        )
+      )
+    } else {
+      capture_warnings(
+        readr::read_tsv(
+          I(prepped_input$txt),
+          skip = skip,            # <-- important: keep identical behavior
+          quote = quote,
+          col_names = cols,
+          na = na,
+          col_types = colspec,
+          progress = progress,
+          show_col_types = show_col_types
+        )
+      )
+    }
+
+    probs <- readr::problems(df)
+    ok <- (length(warn) == 0L) && (nrow(probs) == 0L)
+
+    list(ok = ok, df = df, warnings = warn, problems = probs)
+  }, silent = TRUE)
+
+  if (inherits(out, "try-error")) {
+    list(ok = FALSE, df = NULL, warnings = warn, problems = tibble::tibble(), error = out)
+  } else {
+    out
+  }
+}
+
+#' Finalize a parsed schedule when the strict read is clean
+#'
+#' @description
+#' `ffiec_finalize_if_clean()` applies post-read transformations that are only
+#' appropriate when a schedule has been read **cleanly** (i.e., no warnings and
+#' no recorded parsing problems). When the read is not clean, the function
+#' returns immediately without modifying the data and signals that finalization
+#' was not performed.
+#'
+#' Currently, the only finalization step is to apply FFIEC date overrides via
+#' [apply_ffiec_date_overrides()], which can coerce certain date-like fields
+#' according to `ffiec_col_overrides`.
+#'
+#' @param df A tibble returned by [readr::read_tsv()]. May be `NULL` if the read
+#'   failed hard upstream.
+#' @param ok Logical. Strict read status, typically from [ffiec_read_tsv_strict()].
+#'   Finalization occurs only when `isTRUE(ok)`.
+#' @param warnings Character vector of warnings captured during the read. Included
+#'   for downstream reporting/debugging.
+#' @param problems Tibble of parsing problems from [readr::problems()]. Included
+#'   for downstream reporting/debugging.
+#' @param ffiec_col_overrides Named character vector describing FFIEC column-type
+#'   overrides. Columns with override `"D"` are treated as date columns for the
+#'   override pass.
+#' @param zipfile Character scalar. Path to the ZIP being processed (passed
+#'   through to [apply_ffiec_date_overrides()] for context/debug output).
+#' @param inner_file Character scalar. Member file name within the ZIP (passed
+#'   through to [apply_ffiec_date_overrides()] for context/debug output).
+#' @param repairs_applied Character vector of repairs/events already recorded by
+#'   earlier stages (e.g., `"embedded-newline"`, `"fallback-slow-path"`).
+#' @param debug Logical. If `TRUE`, downstream override routines may emit
+#'   diagnostic messages.
+#'
+#' @return A list containing:
+#' \describe{
+#'   \item{ok}{Logical. `TRUE` if finalization was performed; `FALSE` otherwise.}
+#'   \item{df}{The finalized data frame when `ok = TRUE`, otherwise the input `df`
+#'     unchanged.}
+#'   \item{repairs}{Character vector of repairs/events, including any repairs
+#'     reported by [apply_ffiec_date_overrides()].}
+#'   \item{warnings}{Warnings captured during the read (passed through).}
+#'   \item{problems}{Readr parsing problems (passed through).}
+#' }
+#'
+#' @details
+#' This function intentionally performs **no repairs** when the strict read is not
+#' clean. It is meant to be used as part of a two-phase strategy:
+#' \enumerate{
+#'   \item Read strictly and exit early when clean.
+#'   \item Otherwise, fall back to a repair/canonicalization path and re-read.
+#' }
+#'
+#' @seealso [ffiec_read_tsv_strict()] for strict read diagnostics;
+#'   [apply_ffiec_date_overrides()] for the date override logic.
+#'
+#' @keywords internal
+ffiec_finalize_if_clean <- function(df,
+                                    ok,
+                                    warnings,
+                                    problems,
+                                    ffiec_col_overrides,
+                                    zipfile,
+                                    inner_file,
+                                    repairs_applied = character(0),
+                                    debug = FALSE) {
+  # If the read isn't clean, don't finalize
+  if (!isTRUE(ok)) {
+    return(list(ok = FALSE, df = df, repairs = repairs_applied,
+                warnings = warnings, problems = problems))
+  }
+
+  # Apply date overrides on the clean path (your prior behavior)
+  date_cols <- names(ffiec_col_overrides)[ffiec_col_overrides == "D"]
+
+  res_dates <- apply_ffiec_date_overrides(
+    df = df,
+    date_cols = date_cols,
+    zipfile = zipfile,
+    inner_file = inner_file,
+    debug = debug
+  )
+
+  df2 <- res_dates$df
+  repairs2 <- union(repairs_applied, res_dates$repairs)
+
+  list(ok = TRUE, df = df2, repairs = repairs2,
+       warnings = warnings, problems = problems)
+}
+
+#' Attach FFIEC repair metadata to a data frame
+#'
+#' @description
+#' `attach_repairs()` records the set of repairs or processing events applied
+#' during ingestion by attaching them as an attribute on a data frame.
+#'
+#' The function performs minimal normalization:
+#' - coerces the input to character,
+#' - drops `NA` and empty values,
+#' - removes duplicates.
+#'
+#' It does **not** interpret or validate the repair labels; it simply stores them.
+#'
+#' @param df A data frame or tibble to which repair metadata should be attached.
+#' @param repairs Character vector of repair or processing labels
+#'   (e.g., `"embedded-newline"`, `"fallback-slow-path"`,
+#'   `"coerced-invalid-dates"`).
+#'
+#' @return The input data frame `df`, with a `"ffiec_repairs"` attribute attached.
+#'
+#' @details
+#' Repair metadata is stored as a simple character vector in the
+#' `"ffiec_repairs"` attribute. Downstream code may choose to surface this
+#' attribute as a list-column or ignore it entirely.
+#'
+#' @keywords internal
+attach_repairs <- function(df, repairs) {
+  repairs <- as.character(repairs)
+  repairs <- repairs[!is.na(repairs) & nzchar(repairs)]
+  attr(df, "ffiec_repairs") <- unique(repairs)
+  df
 }
