@@ -98,13 +98,6 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     tibble::as_tibble(stats::setNames(replicate(length(cols), logical(0), simplify = FALSE), cols))
   }
 
-  attach_repairs <- function(df, repairs) {
-    repairs <- as.character(repairs)
-    repairs <- repairs[!is.na(repairs) & nzchar(repairs)]
-    attr(df, "ffiec_repairs") <- unique(repairs)
-    df
-  }
-
   debug <- isTRUE(getOption("ffiec.pq.debug", FALSE))
 
   # ---- header ----
@@ -315,79 +308,6 @@ parse_ffiec_yyyymmdd_silent <- function(x) {
 
   probs <- readr::problems(out)
   attr(out, "ffiec_date_problems") <- probs
-  out
-}
-
-collapse_overflow_tabs <- function(lines, expected_cols) {
-  stopifnot(
-    is.numeric(expected_cols), length(expected_cols) == 1L, expected_cols >= 1
-  )
-
-  # Count fields = tabs + 1
-  n_fields <- function(x) 1L + stringr::str_count(x, "\t")
-
-  # Only touch *data* lines (start with digits + tab) that have too many fields
-  is_data <- grepl("^\\d+\\t", lines)
-  too_many <- is_data & (n_fields(lines) > expected_cols)
-
-  if (!any(too_many)) return(lines)
-
-  fix_one <- function(ln) {
-    parts <- strsplit(ln, "\t", fixed = TRUE)[[1]]
-    if (length(parts) <= expected_cols) return(ln)
-
-    head <- parts[seq_len(expected_cols - 1L)]
-    tail <- parts[expected_cols:length(parts)]
-
-    # Re-join overflow into last field.
-    # (use "\t" to preserve embedded structure; use " " if you prefer flattening)
-    last <- paste(tail, collapse = "\t")
-
-    paste(c(head, last), collapse = "\t")
-  }
-
-  lines[too_many] <- vapply(lines[too_many], fix_one, character(1))
-  lines
-}
-
-#' Trim extra trailing tab delimiters beyond the expected column count
-#'
-#' Some FFIEC schedule rows end with more tab delimiters than implied by the
-#' header, creating "extra empty columns" at the end of the record. This helper
-#' removes only *trailing* tab delimiters so that each line has at most
-#' `expected_cols` fields, without altering interior tabs or non-empty fields.
-#'
-#' @param lines Character vector of TSV record lines (data rows, not header).
-#' @param expected_cols Integer scalar, number of columns implied by the header.
-#'
-#' @return Character vector of lines, with excessive trailing tabs removed.
-#' @keywords internal
-#' @noRd
-trim_extra_trailing_tabs <- function(lines, expected_cols) {
-  stopifnot(
-    is.numeric(expected_cols), length(expected_cols) == 1L, expected_cols >= 1
-  )
-
-  if (length(lines) == 0L) return(lines)
-
-  count_tabs <- function(x) stringr::str_count(x, "\t")
-
-  # Keep empty lines unchanged (you usually drop them earlier anyway)
-  out <- lines
-
-  # For each line, while it has too many fields AND ends with a tab, drop one tab.
-  # Fields = tabs + 1, so "too many fields" means tabs >= expected_cols.
-  too_many <- (count_tabs(out) + 1L) > expected_cols
-  if (!any(too_many)) return(out)
-
-  idx <- which(too_many)
-  for (i in idx) {
-    # only fix by trimming trailing tabs (do not touch interior structure)
-    while ((count_tabs(out[i]) + 1L) > expected_cols && grepl("\t$", out[i])) {
-      out[i] <- sub("\t$", "", out[i])
-    }
-  }
-
   out
 }
 
