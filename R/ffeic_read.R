@@ -47,36 +47,178 @@ get_header_from_zip_tsv <- function(zipfile, inner_file) {
 #' @noRd
 repair_ffiec_tsv_lines <- function(lines,
                                    expected_cols,
-                                   tolerance = 10L,
+                                   tolerance = 0L,
                                    row_start_re = "^\\d+\\t") {
   stopifnot(
     is.numeric(expected_cols), length(expected_cols) == 1L, expected_cols >= 1,
     is.numeric(tolerance), length(tolerance) == 1L, tolerance >= 0
   )
 
-  n_fields <- function(x) 1L + stringr::str_count(x, "\t")
+  repairs <- character(0)
+  add_repair <- function(x) repairs <<- unique(c(repairs, x))
 
+  expected_cols <- as.integer(expected_cols)
+  tolerance     <- as.integer(tolerance)
+
+  # ---- helpers ----
+  n_fields_raw <- function(x) 1L + stringr::str_count(x, "\t")
+  norm_line    <- function(x) sub("\r$", "", x)
+  norm_cont    <- function(x) trimws(norm_line(x))  # don't collapse whitespace; don't touch tabs
+  is_data_row  <- function(x) grepl(row_start_re, x)
+
+  detect_trailing_tab_mode <- function(x, max_check = 2000L, frac = 0.50) {
+    x <- x[nzchar(x)]
+    x <- x[is_data_row(x)]
+    if (!length(x)) return(FALSE)
+    x <- head(x, max_check)
+    mean(grepl("\t$", x)) >= frac
+  }
+
+  lines <- norm_line(lines)
   lines <- lines[nzchar(lines)]
-  if (length(lines) == 0L) return(character(0))
+  if (!length(lines)) {
+    return(list(lines = character(0), repairs = character(0)))
+  }
 
-  min_fields_new_row <- max(1L, as.integer(expected_cols) - as.integer(tolerance))
+  trailing_tab_mode <- detect_trailing_tab_mode(lines)
+  target_cols <- if (trailing_tab_mode) expected_cols + 1L else expected_cols
+
+  if (isTRUE(getOption("ffiec.pq.debug", FALSE))) {
+    message(
+      "repair_ffiec_tsv_lines: expected_cols=", expected_cols,
+      " trailing_tab_mode=", trailing_tab_mode,
+      " target_cols=", target_cols
+    )
+  }
+
+  min_fields_new_row <- max(1L, target_cols - tolerance)
+
+  # Append continuation text *before* any trailing tabs, preserving them.
+  append_cont <- function(cur, ln, sep = " ") {
+    cont <- norm_cont(ln)
+    if (!nzchar(cont)) return(cur)
+
+    tabs <- sub("^(.*?)(\t*)$", "\\2", cur)
+    base <- sub("(\t*)$", "", cur)
+
+    if (grepl("^\t", ln)) {
+      paste0(base, ln, tabs)
+    } else {
+      paste0(base, sep, cont, tabs)
+    }
+  }
+
+  would_overshoot <- function(cur, ln) {
+    (n_fields_raw(cur) + n_fields_raw(ln) - 1L) > target_cols
+  }
 
   out <- character(0)
+  cur <- lines[[1]]
 
-  for (ln in lines) {
-    if (length(out) == 0L) {
-      out <- c(out, ln)
-      next
-    }
+  flush_cur <- function() out <<- c(out, cur)
 
-    looks_like_row_start <- grepl(row_start_re, ln)
-    fields <- n_fields(ln)
+  for (i in 2:length(lines)) {
+    ln <- lines[[i]]
 
-    if (looks_like_row_start && fields >= min_fields_new_row) {
-      out <- c(out, ln)
+    looks_like_row_start <- is_data_row(ln)
+    ln_fields  <- n_fields_raw(ln)
+    cur_fields <- n_fields_raw(cur)
+
+    is_strong_start <- looks_like_row_start && (ln_fields >= min_fields_new_row)
+
+    if (cur_fields < target_cols) {
+      if (looks_like_row_start && would_overshoot(cur, ln)) {
+        flush_cur()
+        cur <- ln
+      } else if (is_strong_start) {
+        flush_cur()
+        cur <- ln
+      } else {
+        # we truly merged physical lines
+        add_repair("embedded-newline")
+        cur <- append_cont(cur, ln)
+      }
     } else {
-      out[length(out)] <- paste0(out[length(out)], " ", ln)
+      if (looks_like_row_start) {
+        flush_cur()
+        cur <- ln
+      } else {
+        add_repair("embedded-newline")
+        cur <- append_cont(cur, ln)
+      }
     }
+  }
+
+  out <- c(out, cur)
+
+  # ---- Post-pass: normalize field count on data rows to exactly target_cols ----
+
+  # Trim ONLY trailing tabs (extra empty fields) down to target_cols.
+  trim_trailing_tabs_to_target <- function(ln) {
+    nf <- n_fields_raw(ln)
+    if (nf <= target_cols) return(ln)
+
+    # how many extra fields?
+    extra <- nf - target_cols
+
+    # Only safe if the line ends with at least `extra` trailing tabs.
+    # (each trailing \t adds an empty final field)
+    m <- regexpr("\t*$", ln)
+    trailing_tabs <- attr(m, "match.length")
+    if (is.na(trailing_tabs)) trailing_tabs <- 0L
+
+    if (trailing_tabs >= extra) {
+      add_repair("extra-trailing-tabs")
+      # remove exactly `extra` tabs from the end
+      sub(paste0("\t{", extra, "}$"), "", ln)
+    } else {
+      # Too many fields not explainable by trailing empties => could be embedded tabs.
+      add_repair("embedded-tabs-suspect")
+      ln
+    }
+  }
+
+  pad_to_target <- function(ln) {
+    if (!is_data_row(ln)) return(ln)
+
+    # First: if too wide, try safe trim of trailing empties
+    ln <- trim_trailing_tabs_to_target(ln)
+
+    nf <- n_fields_raw(ln)
+
+    # If still short, pad with tabs
+    if (nf < target_cols) {
+      ln <- paste0(ln, strrep("\t", target_cols - nf))
+      return(ln)
+    }
+
+    # If in trailing-tab mode, ensure final \t exists
+    if (trailing_tab_mode && !grepl("\t$", ln) && nf == target_cols) {
+      return(paste0(ln, "\t"))
+    }
+
+    ln
+  }
+
+  out <- vapply(out, pad_to_target, character(1))
+
+  list(lines = out, repairs = repairs)
+}
+
+pad_missing_trailing_tabs <- function(lines, expected_cols, row_start_re = "^\\d+\\t") {
+  expected_cols <- as.integer(expected_cols)
+
+  n_fields <- function(x) 1L + stringr::str_count(x, "\t")
+
+  is_data <- grepl(row_start_re, lines)
+  out <- lines
+
+  idx <- which(is_data & nzchar(out) & (n_fields(out) < expected_cols))
+  if (!length(idx)) return(out)
+
+  for (i in idx) {
+    missing <- expected_cols - n_fields(out[[i]])
+    out[[i]] <- paste0(out[[i]], strrep("\t", missing))
   }
 
   out
@@ -151,15 +293,15 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     if (nrow(fast$problems)) message("  fast problems: ", nrow(fast$problems))
   }
 
-  repairs_applied <- "fallback-slow-path"
+  repairs_applied <- c("fallback-slow-path")
 
-  # ---- SLOW PATH: embedded-newline FIRST ----
+  # ---- SLOW PATH ----
   prep <- ffiec_prepare_tsv_input(
     zipfile = zipfile,
     inner_file = inner_file,
     skip = 2L,
     expected_cols = expected_cols,
-    tolerance = 10L,
+    tolerance = 0L,
     row_start_re = "^\\d+\\t"
   )
 
@@ -174,6 +316,29 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     show_col_types = FALSE
   )
 
+  if (debug && !is.null(slow$error)) {
+    message("Slow-path error for ", inner_file, ":")
+    if (inherits(slow$error, "try-error")) {
+      message(attr(slow$error, "condition")$message)
+    } else {
+      message(as.character(slow$error))
+    }
+  }
+
+  if (debug) {
+    message("Slow-path diagnostics for ", inner_file)
+    if (length(slow$warnings)) message("  slow warnings: ", length(unique(slow$warnings)))
+    if (nrow(slow$problems))   message("  slow problems: ", nrow(slow$problems))
+    if (length(slow$warnings)) {
+      message("  example warning:")
+      message("    - ", unique(slow$warnings)[1])
+    }
+    if (nrow(slow$problems)) {
+      message("  first problem row:")
+      print(utils::head(slow$problems, 1))
+    }
+  }
+
   fin_slow <- ffiec_finalize_if_clean(
     df = slow$df,
     ok = slow$ok,
@@ -186,13 +351,22 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     debug = debug
   )
 
-  # If slow read failed outright, return an empty tibble (or propagate error)
   if (is.null(fin_slow$df)) {
     if (debug && !is.null(slow$error)) message("Slow path failed for ", inner_file)
     return(attach_repairs(empty_tbl(cols), union(prep$repairs, "read-failed")))
   }
 
-  attach_repairs(fin_slow$df, fin_slow$repairs)
+  if (debug) {
+    message(
+      "Slow-path summary for ", inner_file,
+      " | ok=", slow$ok,
+      " | warnings=", length(unique(slow$warnings)),
+      " | problems=", nrow(slow$problems),
+      " | prep kind=", prep$input$kind
+    )
+  }
+
+  attach_repairs(fin_slow$df, union(repairs_applied, fin_slow$repairs))
 }
 
 #' Apply FFIEC date overrides, recording invalid-date repairs
@@ -251,6 +425,8 @@ apply_ffiec_date_overrides <- function(df, date_cols, zipfile, inner_file, debug
 
     return(list(df = df2, repairs = "coerced-invalid-dates"))
   }
+
+
 
   list(df = df2, repairs = character(0))
 }
@@ -608,58 +784,63 @@ ffiec_prepare_tsv_input <- function(zipfile,
                                     inner_file,
                                     skip = 2L,
                                     expected_cols,
-                                    tolerance = 10L,
+                                    tolerance = 0L,
                                     row_start_re = "^\\d+\\t") {
+
   con_open <- function() unz(zipfile, inner_file)
 
   con <- unz(zipfile, inner_file)
   on.exit(try(close(con), silent = TRUE), add = TRUE)
   lines <- readLines(con, warn = FALSE)
 
-  # normalize stray CR
   lines <- sub("\r$", "", lines)
 
   header_lines <- if (skip > 0L) utils::head(lines, skip) else character(0)
   data_lines   <- if (length(lines) > skip) lines[(skip + 1L):length(lines)] else character(0)
 
-  if (length(data_lines) == 0L) {
+  if (!length(data_lines)) {
     return(list(input = list(kind = "connection", con_open = con_open),
                 repairs = character(0)))
   }
 
-  fixed_data <- repair_ffiec_tsv_lines(
+  fixed <- repair_ffiec_tsv_lines(
     lines = data_lines,
     expected_cols = expected_cols,
     tolerance = tolerance,
     row_start_re = row_start_re
   )
 
-  n_bad <- function(x) {
-    x <- sub("\r$", "", x)
-    is_data <- grepl(row_start_re, x)
-    x <- x[is_data & nzchar(x)]
-    if (!length(x)) return(0L)
-    tabs <- stringr::str_count(x, "\t")
-    sum((tabs + 1L) != expected_cols)
+  # Back-compat
+  if (is.character(fixed)) {
+    fixed <- list(lines = fixed, repairs = character(0))
   }
 
-  before_bad <- n_bad(data_lines)
-  after_bad  <- n_bad(fixed_data)
+  stopifnot(is.list(fixed), !is.null(fixed$lines), is.character(fixed$lines))
+  fixed_data <- fixed$lines
+  repairs_from_lines <- if (is.null(fixed$repairs)) character(0) else fixed$repairs
 
-  repaired <- after_bad < before_bad
+  # Decide if anything meaningful happened
+  repaired <- length(repairs_from_lines) > 0L || !identical(fixed_data, data_lines)
 
   if (!repaired) {
-    list(
+    return(list(
       input = list(kind = "connection", con_open = con_open),
       repairs = character(0)
-    )
-  } else {
-    list(
-      input = list(kind = "text", txt = paste(c(header_lines, fixed_data), collapse = "\n")),
-      repairs = "embedded-newline"
-    )
+    ))
   }
+
+  txt <- paste(c(header_lines, fixed_data), collapse = "\n")
+  txt <- paste0(txt, "\n")
+
+  raw <- charToRaw(txt)
+  con_open_fixed <- function() rawConnection(raw, open = "rb")
+
+  list(
+    input = list(kind = "connection", con_open = con_open_fixed),
+    repairs = repairs_from_lines
+  )
 }
+
 #' Read a prepared FFIEC TSV input with strict diagnostics
 #'
 #' @description
@@ -756,10 +937,16 @@ ffiec_read_tsv_strict <- function(prepped_input,
         )
       )
     } else {
+      tmp <- tempfile(fileext = ".tsv")
+      on.exit(try(unlink(tmp), silent = TRUE), add = TRUE)
+
+      # prepped_input$txt should be a character vector of lines
+      writeLines(prepped_input$txt, tmp, useBytes = TRUE)
+
       capture_warnings(
         readr::read_tsv(
-          I(prepped_input$txt),
-          skip = skip,            # <-- important: keep identical behavior
+          tmp,
+          skip = skip,
           quote = quote,
           col_names = cols,
           na = na,
