@@ -41,8 +41,81 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     ffiec_col_overrides = ffiec_col_overrides
   )
 
+  # ---- FAST PATH: direct readr parse (no text munging) ----
+  fast_warnings <- character(0)
+
+  fast_try <- try({
+    con_fast <- unz(zipfile, inner_file)
+    on.exit(try(close(con_fast), silent = TRUE), add = TRUE)
+
+    df_fast <- withCallingHandlers(
+      readr::read_tsv(
+        con_fast,
+        skip = 2,
+        quote = "",
+        col_names = cols,
+        na = c("", "NA", "CONF"),
+        col_types = colspec,
+        progress = FALSE,
+        show_col_types = FALSE
+      ),
+      warning = function(w) {
+        fast_warnings <<- c(fast_warnings, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }
+    )
+
+    df_fast
+  }, silent = TRUE)
+
+  if (!inherits(fast_try, "try-error")) {
+    df_fast <- fast_try
+    probs_fast <- readr::problems(df_fast)
+
+    warn_trigger <- length(fast_warnings) > 0L
+    prob_trigger <- nrow(probs_fast) > 0L
+
+    if (debug && warn_trigger) {
+      message("Fast-path warnings in ", inner_file, ":")
+      for (msg in unique(fast_warnings)) message("  - ", msg)
+    }
+    if (debug && prob_trigger) {
+      message("Fast-path readr problems in ", inner_file, ":")
+      print(probs_fast)
+    }
+
+    # If clean, finalize and return quickly
+    if (!warn_trigger && !prob_trigger) {
+      fin <- ffiec_finalize_if_clean(
+        df = df_fast,
+        ok = TRUE,
+        warnings = character(0),
+        problems = probs_fast,          # empty
+        ffiec_col_overrides = ffiec_col_overrides,
+        zipfile = zipfile,
+        inner_file = inner_file,
+        repairs_applied = character(0),
+        debug = debug
+      )
+
+      df_out <- fin$df
+      attr(df_out, "repairs")  <- fin$repairs
+      attr(df_out, "warnings") <- fin$warnings
+      attr(df_out, "problems") <- fin$problems
+      return(df_out)
+    }
+
+    if (debug) message("Fast path not clean; falling back to slow path for ", inner_file)
+  } else {
+    if (debug) {
+      message("Fast path errored; falling back to slow path for ", inner_file)
+      message(conditionMessage(attr(fast_try, "condition")))
+    }
+  }
+
+  # ---- SLOW PATH (your current logic) ----
   con <- unz(zipfile, inner_file)
-  on.exit(close(con), add = TRUE)
+  on.exit(try(close(con), silent = TRUE), add = TRUE)
 
   lines <- readLines(con, warn = FALSE)
 
@@ -57,10 +130,8 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
   }
 
   txt <- paste(lines, collapse = "\n")
-
   txt2 <- gsub("(?<!\\t)\\n", " ", txt, perl = TRUE)
 
-  # NOTE: no newline “repair” here
   df <- read_tsv_with_tab_repair(
     txt2,
     cols = cols,
