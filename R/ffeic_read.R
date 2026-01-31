@@ -70,7 +70,7 @@ repair_ffiec_tsv_lines <- function(lines,
     x <- x[nzchar(x)]
     x <- x[is_data_row(x)]
     if (!length(x)) return(FALSE)
-    x <- head(x, max_check)
+    x <- utils::head(x, max_check)
     mean(grepl("\t$", x)) >= frac
   }
 
@@ -236,137 +236,174 @@ pad_missing_trailing_tabs <- function(lines, expected_cols, row_start_re = "^\\d
 #' @noRd
 read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
 
-  empty_tbl <- function(cols) {
-    tibble::as_tibble(stats::setNames(replicate(length(cols), logical(0), simplify = FALSE), cols))
-  }
-
   debug <- isTRUE(getOption("ffiec.pq.debug", FALSE))
 
-  # ---- header ----
   raw_cols <- get_header_from_zip_tsv(zipfile, inner_file)
   cols <- clean_cols(raw_cols)
   expected_cols <- length(cols)
-  if (!is.numeric(expected_cols) || expected_cols < 1L) {
-    stop("Header parse produced 0 columns for inner_file: ", inner_file, call. = FALSE)
-  }
 
-  # ---- colspec ----
   ffiec_col_overrides <- default_ffiec_col_overrides()
   colspec <- make_colspec(
     cols, schema, xbrl_to_readr,
     ffiec_col_overrides = ffiec_col_overrides
   )
 
-  # ---- FAST PATH ----
-  fast_input <- list(kind = "connection", con_open = function() unz(zipfile, inner_file))
+  con <- unz(zipfile, inner_file)
+  on.exit(close(con), add = TRUE)
 
-  fast <- ffiec_read_tsv_strict(
-    prepped_input = fast_input,
-    cols = cols,
-    colspec = colspec,
-    skip = 2L,
-    quote = "",
-    na = c("", "NA", "CONF"),
-    progress = FALSE,
-    show_col_types = FALSE
-  )
+  lines <- readLines(con, warn = FALSE)
 
-  fin_fast <- ffiec_finalize_if_clean(
-    df = fast$df,
-    ok = fast$ok,
-    warnings = fast$warnings,
-    problems = fast$problems,
-    ffiec_col_overrides = ffiec_col_overrides,
-    zipfile = zipfile,
-    inner_file = inner_file,
-    repairs_applied = character(0),
-    debug = debug
-  )
+  # count lines that do NOT end with \t
+  bad_ends <- sum(!grepl("\t$", lines))
 
-  if (isTRUE(fin_fast$ok)) {
-    return(attach_repairs(fin_fast$df, fin_fast$repairs))
-  }
-
-  if (debug) {
-    message("Falling back to repairs for ", inner_file)
-    if (length(fast$warnings)) message("  fast warnings: ", length(unique(fast$warnings)))
-    if (nrow(fast$problems)) message("  fast problems: ", nrow(fast$problems))
-  }
-
-  repairs_applied <- c("fallback-slow-path")
-
-  # ---- SLOW PATH ----
-  prep <- ffiec_prepare_tsv_input(
-    zipfile = zipfile,
-    inner_file = inner_file,
-    skip = 2L,
-    expected_cols = expected_cols,
-    tolerance = 0L,
-    row_start_re = "^\\d+\\t"
-  )
-
-  slow <- ffiec_read_tsv_strict(
-    prepped_input = prep$input,
-    cols = cols,
-    colspec = colspec,
-    skip = 2L,
-    quote = "",
-    na = c("", "NA", "CONF"),
-    progress = FALSE,
-    show_col_types = FALSE
-  )
-
-  if (debug && !is.null(slow$error)) {
-    message("Slow-path error for ", inner_file, ":")
-    if (inherits(slow$error, "try-error")) {
-      message(attr(slow$error, "condition")$message)
-    } else {
-      message(as.character(slow$error))
-    }
-  }
-
-  if (debug) {
-    message("Slow-path diagnostics for ", inner_file)
-    if (length(slow$warnings)) message("  slow warnings: ", length(unique(slow$warnings)))
-    if (nrow(slow$problems))   message("  slow problems: ", nrow(slow$problems))
-    if (length(slow$warnings)) {
-      message("  example warning:")
-      message("    - ", unique(slow$warnings)[1])
-    }
-    if (nrow(slow$problems)) {
-      message("  first problem row:")
-      print(utils::head(slow$problems, 1))
-    }
-  }
-
-  fin_slow <- ffiec_finalize_if_clean(
-    df = slow$df,
-    ok = slow$ok,
-    warnings = slow$warnings,
-    problems = slow$problems,
-    ffiec_col_overrides = ffiec_col_overrides,
-    zipfile = zipfile,
-    inner_file = inner_file,
-    repairs_applied = union(repairs_applied, prep$repairs),
-    debug = debug
-  )
-
-  if (is.null(fin_slow$df)) {
-    if (debug && !is.null(slow$error)) message("Slow path failed for ", inner_file)
-    return(attach_repairs(empty_tbl(cols), union(prep$repairs, "read-failed")))
-  }
-
-  if (debug) {
+  if (bad_ends > 0L && debug) {
     message(
-      "Slow-path summary for ", inner_file,
-      " | ok=", slow$ok,
-      " | warnings=", length(unique(slow$warnings)),
-      " | problems=", nrow(slow$problems),
-      " | prep kind=", prep$input$kind
+      "WARNING: ", bad_ends,
+      " lines do not end with \\t; newline repair may be unsafe"
     )
   }
 
-  attach_repairs(fin_slow$df, union(repairs_applied, fin_slow$repairs))
+  txt <- paste(lines, collapse = "\n")
+
+  txt2 <- gsub("(?<!\\t)\\n", " ", txt, perl = TRUE)
+
+  # NOTE: no newline “repair” here
+  df <- read_tsv_with_tab_repair(
+    txt2,
+    cols = cols,
+    colspec = colspec,
+    expected_cols = expected_cols
+  )
+
+  fin <- ffiec_finalize_if_clean(
+    df = df,
+    ok = isTRUE(attr(df, "ok")),
+    warnings = attr(df, "warnings"),
+    problems = attr(df, "problems"),
+    ffiec_col_overrides = ffiec_col_overrides,
+    zipfile = zipfile,
+    inner_file = inner_file,
+    repairs_applied = attr(df, "repairs"),
+    debug = debug
+  )
+
+  df_out <- fin$df
+  attr(df_out, "repairs")  <- fin$repairs
+  attr(df_out, "warnings") <- fin$warnings
+  attr(df_out, "problems") <- fin$problems
+  df_out
+}
+
+#' @keywords internal
+#' @noRd
+fix_extra_tabs <- function(lines, expected_cols) {
+  keep_tabs <- expected_cols - 1L
+
+  vapply(lines, function(ln) {
+    tabs <- gregexpr("\t", ln, fixed = TRUE)[[1]]
+    if (tabs[1] == -1L) return(ln)            # no tabs at all
+    if (length(tabs) <= keep_tabs) return(ln) # already OK
+
+    # split into: prefix ends BEFORE the (keep_tabs+1)th tab
+    cut_pos <- tabs[keep_tabs]  # position of the last tab we keep as delimiter
+    prefix <- substr(ln, 1L, cut_pos)          # includes that tab
+    rest   <- substr(ln, cut_pos + 1L, nchar(ln))
+
+    # convert any remaining tabs in rest to spaces
+    paste0(prefix, gsub("\t", " ", rest, fixed = TRUE))
+  }, character(1))
+}
+
+#' @keywords internal
+#' @noRd
+read_tsv_quiet_check <- function(txt, cols, colspec, skip = 2L) {
+  warn <- character(0)
+
+  df <- withCallingHandlers(
+    readr::read_tsv(
+      I(txt),
+      col_names = cols,
+      col_types = colspec,
+      skip = skip,
+      quote = "",
+      na = c("", "NA", "CONF"),
+      progress = FALSE,
+      show_col_types = FALSE
+    ),
+    warning = function(w) {
+      warn <<- c(warn, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+
+  probs <- readr::problems(df)
+
+  list(
+    df = df,
+    warnings = unique(warn),
+    problems = probs,
+    ok = (length(warn) == 0L) && (nrow(probs) == 0L)
+  )
+}
+
+#' @keywords internal
+#' @noRd
+read_tsv_with_tab_repair <- function(txt,
+                                     cols,
+                                     colspec,
+                                     skip = 2L,
+                                     expected_cols = length(cols)) {
+
+  res1 <- read_tsv_quiet_check(txt, cols, colspec, skip)
+
+  if (res1$ok) {
+    df <- res1$df
+    attr(df, "problems") <- res1$problems
+    attr(df, "warnings") <- res1$warnings
+    attr(df, "ok")       <- TRUE
+    attr(df, "repairs")  <- character(0)
+    return(df)
+  } else {
+    # ---- second attempt: minimal tab repair ----
+    lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
+    if (length(lines) && identical(lines[[length(lines)]], "")) {
+      lines <- lines[-length(lines)]
+    }
+    header <- lines[seq_len(skip)]
+    data   <- lines[-seq_len(skip)]
+
+    data_fixed <- fix_extra_tabs(data, expected_cols)
+
+    txt_fixed <- paste(c(header, data_fixed), collapse = "\n")
+
+    warn <- character(0)
+
+    df2 <- withCallingHandlers(
+      readr::read_tsv(
+        I(txt_fixed),
+        col_names = cols,
+        col_types = colspec,
+        skip = skip,
+        quote = "",
+        na = c("", "NA", "CONF"),
+        progress = FALSE,
+        show_col_types = FALSE
+      ),
+      warning = function(w) {
+        warn <<- c(warn, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }
+    )
+
+    probs <- readr::problems(df2)
+    ok <- (length(warn) == 0L) && (nrow(probs) == 0L)
+
+    attr(df2, "problems") <- probs
+    attr(df2, "warnings") <- unique(warn)
+    attr(df2, "ok")       <- ok
+    attr(df2, "repairs")  <- "tab-repair"
+    df2
+  }
 }
 
 #' Apply FFIEC date overrides, recording invalid-date repairs
