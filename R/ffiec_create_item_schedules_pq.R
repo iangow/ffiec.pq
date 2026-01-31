@@ -51,10 +51,7 @@ ffiec_create_item_schedules_pq <- function(out_dir = NULL,
                                            schema = "ffiec",
                                            schedules = NULL,
                                            overwrite = FALSE,
-                                           file_name = "ffiec_item_schedules.parquet",
-                                           progress = FALSE,
-                                           cache = TRUE,
-                                           cache_file = NULL) {
+                                           file_name = "ffiec_item_schedules.parquet") {
   out_dir <- resolve_out_dir(out_dir = out_dir, data_dir = data_dir, schema = schema)
   if (is.null(out_dir)) {
     stop("Provide `out_dir`, or `data_dir`, or set DATA_DIR.", call. = FALSE)
@@ -85,12 +82,7 @@ ffiec_create_item_schedules_pq <- function(out_dir = NULL,
     )
   }
 
-  # --- choose cache location ---
-  if (is.null(cache_file)) {
-    cache_file <- file.path(out_dir, ".ffiec_item_schedules_schema_cache.rds")
-  }
-
-  # --- list files using the package’s existing logic ---
+  # --- list files using the package's existing logic ---
   pqs <- ffiec_list_pqs(out_dir = out_dir, schema = schema)
 
   pqs <- pqs |>
@@ -106,58 +98,15 @@ ffiec_create_item_schedules_pq <- function(out_dir = NULL,
     stop("No Parquet files matched the requested schedule(s).", call. = FALSE)
   }
 
-  # --- schema cache: path -> list(mtime, size, cols) ---
-  schema_cache <- list()
-  if (isTRUE(cache) && file.exists(cache_file)) {
-    schema_cache <- tryCatch(readRDS(cache_file), error = function(e) list())
-    if (!is.list(schema_cache)) schema_cache <- list()
-  }
+  # Helper: get schema names
+  pq_cols <- function(path) {
 
-  # Helper: get schema names with caching
-  pq_cols_cached <- function(path) {
-    info <- file.info(path)
-    mtime <- as.numeric(info$mtime)
-    size  <- as.numeric(info$size)
-
-    key <- path
-    hit <- schema_cache[[key]]
-
-    if (isTRUE(cache) &&
-        is.list(hit) &&
-        isTRUE(all.equal(hit$mtime, mtime)) &&
-        isTRUE(all.equal(hit$size, size)) &&
-        !is.null(hit$cols)) {
-      return(hit$cols)
-    }
-
-    cols <- arrow::read_parquet(path, as_data_frame = FALSE)$schema$names
-
-    if (isTRUE(cache)) {
-      schema_cache[[key]] <<- list(mtime = mtime, size = size, cols = cols)
-    }
-
+    pq <- arrow::ParquetFileReader$create(path)
+    cols <- pq$GetSchema()$names
     cols
   }
 
-  # --- read schemas with progress ---
-  n <- nrow(pqs)
-  if (isTRUE(progress)) {
-    pb <- utils::txtProgressBar(min = 0, max = n, style = 3)
-    on.exit(try(close(pb), silent = TRUE), add = TRUE)
-
-    cols_list <- vector("list", n)
-    for (i in seq_len(n)) {
-      cols_list[[i]] <- pq_cols_cached(pqs$full_name[[i]])
-      utils::setTxtProgressBar(pb, i)
-    }
-  } else {
-    cols_list <- purrr::map(pqs$full_name, pq_cols_cached)
-  }
-
-  # --- persist cache (best-effort) ---
-  if (isTRUE(cache)) {
-    try(saveRDS(schema_cache, cache_file), silent = TRUE)
-  }
+  cols_list <- purrr::map(pqs$full_name, pq_cols)
 
   # --- build mapping ---
   ffiec_item_schedules <-
