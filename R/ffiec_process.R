@@ -54,18 +54,24 @@ read_schedule_all_parts <- function(zipfile, files_tbl, schema, xbrl_to_readr) {
 
   repairs <- ffiec_union_repairs(dfs)
 
+  ok <- all(purrr::map_lgl(dfs, ffiec_get_ok))
+
   df <- combine_call_parts(dfs, key = "IDRSSD") |>
     dplyr::mutate(date = files_tbl$date[[1]])
 
   df <- fix_pure_percent_cols(df, schema)
 
-  ffiec_set_repairs(df, repairs)
+  # attach repairs (existing) + attach ok (new)
+  df <- ffiec_set_repairs(df, repairs)
+  attr(df, "ok") <- ok
+
+  df
 }
 
 #' @keywords internal
 #' @noRd
 ffiec_get_repairs <- function(x) {
-  r <- attr(x, "ffiec_repairs", exact = TRUE)
+  r <- attr(x, "repairs", exact = TRUE)
   if (is.null(r)) character(0) else unique(as.character(r))
 }
 
@@ -78,7 +84,7 @@ ffiec_union_repairs <- function(xs) {
 #' @keywords internal
 #' @noRd
 ffiec_set_repairs <- function(x, repairs) {
-  attr(x, "ffiec_repairs") <- unique(as.character(repairs))
+  attr(x, "repairs") <- unique(as.character(repairs))
   x
 }
 
@@ -203,9 +209,8 @@ process_zip_schedules <- function(zipfile, inside_files, schema,
 
     # Read + combine parts (single group g)
     df <- read_schedule_all_parts(zipfile, g, schema, xbrl_to_readr)
-
-    repairs <- attr(df, "ffiec_repairs", exact = TRUE)
-    if (is.null(repairs)) repairs <- character(0)
+    ok <- ffiec_get_ok(df)
+    repairs <- ffiec_get_repairs(df)
 
     out_path <- file.path(out_dir, sprintf("%s%s_%s.parquet", prefix, schedule, date_raw))
     arrow::write_parquet(df, out_path)
@@ -219,6 +224,7 @@ process_zip_schedules <- function(zipfile, inside_files, schema,
       zipfile     = basename(zipfile),
       n_parts     = n_parts,
       repairs     = list(repairs),
+      ok          = ok,
       inner_files = list(basename(g$file))    # <-- list-column (1+ files)
     )
   })
@@ -390,7 +396,8 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL) {
     dplyr::mutate(
       zipfile     = basename(zipfile),
       repairs     = dplyr::coalesce(.data$repairs, list(character(0))),
-      inner_files = dplyr::coalesce(.data$inner_files, list(character(0)))
+      inner_files = dplyr::coalesce(.data$inner_files, list(character(0))),
+      ok = TRUE
     )
 
   out <- dplyr::bind_rows(sched, por) |>

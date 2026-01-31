@@ -17,6 +17,10 @@ get_header_from_zip_tsv <- function(zipfile, inner_file) {
   strsplit(header, "\t", fixed = TRUE)[[1]]
 }
 
+#' @keywords internal
+#' @noRd
+ffiec_get_ok <- function(df) isTRUE(attr(df, "ok"))
+
 #' Read a schedule TSV from within a zip file
 #'
 #' @param zipfile Path to the bulk FFIEC zip file.
@@ -59,17 +63,6 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
     attr(df_fast, "ok")       <- isTRUE(res_fast$ok)
     attr(df_fast, "repairs")  <- character(0)
 
-    if (debug && !attr(df_fast, "ok")) {
-      if (length(res_fast$warnings) > 0L) {
-        message("Fast-path warnings in ", inner_file, ":")
-        for (msg in res_fast$warnings) message("  - ", msg)
-      }
-      if (nrow(res_fast$problems) > 0L) {
-        message("Fast-path readr problems in ", inner_file, ":")
-        print(res_fast$problems)
-      }
-    }
-
     if (attr(df_fast, "ok")) {
       fin <- ffiec_finalize_if_clean(
         df = df_fast,
@@ -95,15 +88,6 @@ read_call_from_zip <- function(zipfile, inner_file, schema, xbrl_to_readr) {
   on.exit(try(close(con), silent = TRUE), add = TRUE)
 
   lines <- readLines(con, warn = FALSE)
-
-  bad_ends <- sum(!grepl("\t$", lines))
-  if (bad_ends > 0L && debug) {
-    message(
-      "WARNING: ", bad_ends,
-      " lines do not end with \\t; newline repair may be unsafe"
-    )
-  }
-
   txt <- paste(lines, collapse = "\n")
   txt2 <- gsub("(?<!\\t)\\n", " ", txt, perl = TRUE)
   rep_newline <- !identical(txt2, txt)
@@ -255,7 +239,7 @@ read_tsv_with_tab_repair <- function(txt,
     )
 
     probs <- readr::problems(df2)
-    ok <- length(warn)==0 && nrow(problems)==0
+    ok <- length(warn) == 0L && nrow(probs) == 0L
 
     attr(df2, "problems") <- probs
     attr(df2, "warnings") <- unique(warn)
