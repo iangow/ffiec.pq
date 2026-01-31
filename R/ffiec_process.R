@@ -157,6 +157,19 @@ process_zip_schedules <- function(zipfile, inside_files, schema,
 
   groups <- dplyr::group_split(targets, .data$schedule, .data$date_raw, .keep = TRUE)
 
+  empty_results <- tibble::tibble(
+    type        = character(),
+    kind        = character(),
+    date_raw    = character(),
+    date        = as.Date(character()),
+    parquet     = character(),
+    zipfile     = character(),
+    n_parts     = integer(),
+    repairs     = list(),
+    ok          = logical(),
+    inner_files = list()
+  )
+
   results <- purrr::map_dfr(groups, function(g) {
     schedule <- g$schedule[[1]]
     date_raw <- g$date_raw[[1]]
@@ -228,6 +241,8 @@ process_zip_schedules <- function(zipfile, inside_files, schema,
       inner_files = list(basename(g$file))    # <-- list-column (1+ files)
     )
   })
+
+  results <- dplyr::bind_rows(empty_results, results)
 
   list(
     out_dir = out_dir,
