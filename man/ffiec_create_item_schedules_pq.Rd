@@ -10,10 +10,7 @@ ffiec_create_item_schedules_pq(
   schema = "ffiec",
   schedules = NULL,
   overwrite = FALSE,
-  file_name = "ffiec_item_schedules.parquet",
-  progress = TRUE,
-  cache = TRUE,
-  cache_file = NULL
+  file_name = "ffiec_item_schedules.parquet"
 )
 }
 \arguments{
@@ -35,15 +32,6 @@ except \code{"por"} and \code{"items"}.}
 
 \item{file_name}{Output Parquet file name
 (default \code{"ffiec_item_schedules.parquet"}).}
-
-\item{progress}{Logical; whether to show a progress bar while reading
-Parquet schemas.}
-
-\item{cache}{Logical; whether to cache Parquet file schemas in an RDS file
-to speed up repeated runs.}
-
-\item{cache_file}{Optional path to the schema cache file. If \code{NULL},
-defaults to \code{file.path(out_dir, ".ffiec_item_schedules_schema_cache.rds")}.}
 }
 \value{
 A tibble with one row describing the file written, including its

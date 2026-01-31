@@ -21,12 +21,6 @@
 #' @param overwrite Logical; whether to overwrite an existing output file.
 #' @param file_name Output Parquet file name
 #'   (default \code{"ffiec_item_schedules.parquet"}).
-#' @param progress Logical; whether to show a progress bar while reading
-#'   Parquet schemas.
-#' @param cache Logical; whether to cache Parquet file schemas in an RDS file
-#'   to speed up repeated runs.
-#' @param cache_file Optional path to the schema cache file. If \code{NULL},
-#'   defaults to \code{file.path(out_dir, ".ffiec_item_schedules_schema_cache.rds")}.
 #'
 #' @details
 #' Parquet files are located using the same directory-resolution rules as
