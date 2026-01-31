@@ -157,7 +157,7 @@ read_tsv_quiet_check_impl <- function(input, cols, colspec, skip = 2L) {
       col_types = colspec,
       skip = skip,
       quote = "",
-      na = c("", "NA", "CONF"),
+      na = c("", "CONF"),
       progress = FALSE,
       show_col_types = FALSE
     ),
@@ -228,7 +228,7 @@ read_tsv_with_tab_repair <- function(txt,
         col_types = colspec,
         skip = skip,
         quote = "",
-        na = c("", "NA", "CONF"),
+        na = c("", "CONF"),
         progress = FALSE,
         show_col_types = FALSE
       ),
@@ -306,8 +306,6 @@ apply_ffiec_date_overrides <- function(df, date_cols, zipfile, inner_file, debug
     return(list(df = df2, repairs = "coerced-invalid-dates"))
   }
 
-
-
   list(df = df2, repairs = character(0))
 }
 
@@ -347,7 +345,7 @@ parse_ffiec_yyyymmdd_silent <- function(x) {
   x_chr <- as.character(x)
 
   # treat these as missing for date parsing
-  na_tokens <- c("", "NA", "0", "00000000")
+  na_tokens <- c("", "0", "00000000")
 
   probs <- NULL
   out <- withCallingHandlers(
@@ -451,7 +449,7 @@ read_por_from_zip <- function(zipfile, inner_file) {
     row2 <- split_tsv_line(lines[2])
     id_pos <- match("IDRSSD", header)
     id_val <- if (!is.na(id_pos) && id_pos <= length(row2)) row2[[id_pos]] else NA_character_
-    id_is_data <- !is.na(readr::parse_integer(id_val, na = c("", "NA")))
+    id_is_data <- !is.na(readr::parse_integer(id_val, na = ""))
     if (!id_is_data) skip <- 2L
   }
 

@@ -45,7 +45,7 @@ mdrm <- read_csv(
   mutate(
     across(
       c(start_date, end_date),
-      ~ parse_date(.x, format = dt_fmt, na = c("", "NA", sentinel))
+      ~ parse_date(.x, format = dt_fmt, na = c("", sentinel))
     ),
     item = paste0(mnemonic, item_code),
     .before = everything()
