@@ -52,7 +52,7 @@ ffiec_create_item_schedules_pq <- function(out_dir = NULL,
                                            schedules = NULL,
                                            overwrite = FALSE,
                                            file_name = "ffiec_item_schedules.parquet",
-                                           progress = TRUE,
+                                           progress = FALSE,
                                            cache = TRUE,
                                            cache_file = NULL) {
   out_dir <- resolve_out_dir(out_dir = out_dir, data_dir = data_dir, schema = schema)
