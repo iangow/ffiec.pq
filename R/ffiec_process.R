@@ -231,41 +231,6 @@ process_zip_schedules <- function(zipfile, inside_files, schema,
 
 # ---- POR helpers ----
 
-#' Extract a single internal file from a zip to an output directory
-#'
-#' Extracts exactly one internal file from \code{zipfile} into \code{out_dir},
-#' renaming it to \code{out_name}. This is useful for debugging or inspecting
-#' the raw TSV content.
-#'
-#' @param zipfile Path to the zip file.
-#' @param inner_file Internal file path inside the zip.
-#' @param out_dir Output directory.
-#' @param out_name Output filename to use.
-#'
-#' @return The full output path to the extracted file.
-#' @keywords internal
-#' @noRd
-extract_one_inner_file <- function(zipfile, inner_file, out_dir, out_name) {
-  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-
-  tmp <- tempfile("ffiec_unzip_")
-  dir.create(tmp)
-
-  extracted <- unzip(zipfile, files = inner_file, exdir = tmp)
-  stopifnot(length(extracted) == 1L)
-
-  out_path <- file.path(out_dir, out_name)
-
-  ok <- file.rename(extracted, out_path)
-  if (!ok) {
-    ok2 <- file.copy(extracted, out_path, overwrite = TRUE)
-    if (!ok2) stop("Failed to move/copy extracted file to output path: ", out_path)
-  }
-
-  unlink(tmp, recursive = TRUE)
-  out_path
-}
-
 #' Split a tab-delimited line into fields
 #'
 #' @param line A single character string.

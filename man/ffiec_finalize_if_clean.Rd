@@ -20,7 +20,7 @@ ffiec_finalize_if_clean(
 \item{df}{A tibble returned by [readr::read_tsv()]. May be `NULL` if the read
 failed hard upstream.}
 
-\item{ok}{Logical. Strict read status, typically from [ffiec_read_tsv_strict()].
+\item{ok}{Logical. Strict read status.
 Finalization occurs only when `isTRUE(ok)`.}
 
 \item{warnings}{Character vector of warnings captured during the read. Included
@@ -77,7 +77,6 @@ clean. It is meant to be used as part of a two-phase strategy:
 }
 }
 \seealso{
-[ffiec_read_tsv_strict()] for strict read diagnostics;
-  [apply_ffiec_date_overrides()] for the date override logic.
+[apply_ffiec_date_overrides()] for the date override logic.
 }
 \keyword{internal}
