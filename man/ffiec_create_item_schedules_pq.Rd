@@ -5,7 +5,6 @@
 \title{Create FFIEC item–schedule coverage Parquet file}
 \usage{
 ffiec_create_item_schedules_pq(
-  out_dir = NULL,
   data_dir = NULL,
   schema = "ffiec",
   schedules = NULL,
@@ -14,12 +13,10 @@ ffiec_create_item_schedules_pq(
 )
 }
 \arguments{
-\item{out_dir}{Optional output directory containing FFIEC Parquet files.
-If \code{NULL}, the directory is resolved using \code{data_dir} and
-\code{schema}, or the \code{DATA_DIR} environment variable.}
-
-\item{data_dir}{Optional parent directory containing schema subdirectories.
-Ignored if \code{out_dir} is provided.}
+\item{data_dir}{Optional parent directory for Parquet output. If provided
+and \code{schema} is not \code{NULL}, files are written under
+\code{file.path(data_dir, schema)}. If \code{NULL}, the environment
+variable \code{DATA_DIR} is used.}
 
 \item{schema}{Schema name used to resolve the Parquet directory
 (default \code{"ffiec"}).}

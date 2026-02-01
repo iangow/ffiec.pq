@@ -8,11 +8,10 @@
 #' schedule Parquet files and is intended for downstream metadata inspection
 #' and cross-language use (e.g., Python, DuckDB).
 #'
-#' @param out_dir Optional output directory containing FFIEC Parquet files.
-#'   If \code{NULL}, the directory is resolved using \code{data_dir} and
-#'   \code{schema}, or the \code{DATA_DIR} environment variable.
-#' @param data_dir Optional parent directory containing schema subdirectories.
-#'   Ignored if \code{out_dir} is provided.
+#' @param data_dir Optional parent directory for Parquet output. If provided
+#'   and \code{schema} is not \code{NULL}, files are written under
+#'   \code{file.path(data_dir, schema)}. If \code{NULL}, the environment
+#'   variable \code{DATA_DIR} is used.
 #' @param schema Schema name used to resolve the Parquet directory
 #'   (default \code{"ffiec"}).
 #' @param schedules Optional character vector of schedules to include
@@ -40,15 +39,14 @@
 #' }
 #'
 #' @export
-ffiec_create_item_schedules_pq <- function(out_dir = NULL,
-                                           data_dir = NULL,
+ffiec_create_item_schedules_pq <- function(data_dir = NULL,
                                            schema = "ffiec",
                                            schedules = NULL,
                                            overwrite = FALSE,
                                            file_name = "ffiec_item_schedules.parquet") {
-  out_dir <- resolve_out_dir(out_dir = out_dir, data_dir = data_dir, schema = schema)
+  out_dir <- resolve_out_dir(data_dir = data_dir, schema = schema)
   if (is.null(out_dir)) {
-    stop("Provide `out_dir`, or `data_dir`, or set DATA_DIR.", call. = FALSE)
+    stop("Provide `data_dir` or set `DATA_DIR`.", call. = FALSE)
   }
 
   out_dir <- normalizePath(out_dir, mustWork = FALSE)
@@ -77,7 +75,7 @@ ffiec_create_item_schedules_pq <- function(out_dir = NULL,
   }
 
   # --- list files using the package's existing logic ---
-  pqs <- ffiec_list_pqs(out_dir = out_dir, schema = schema)
+  pqs <- ffiec_list_pqs(data_dir = data_dir, schema = schema)
 
   pqs <- pqs |>
     dplyr::filter(!.data$schedule %in% c("items", "por")) |>

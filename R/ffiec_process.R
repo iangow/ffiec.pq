@@ -325,12 +325,11 @@ process_zip_por <- function(zipfile, inside_files, out_dir, prefix="") {
 
 #' @keywords internal
 #' @noRd
-resolve_dirs <- function(in_dir = NULL, out_dir = NULL,
-                         raw_data_dir = NULL, data_dir = NULL,
+resolve_dirs <- function(raw_data_dir = NULL, data_dir = NULL,
                          schema = "ffiec") {
 
-  in_dir  <- resolve_raw_dir(in_dir = in_dir, raw_data_dir = raw_data_dir, schema = schema)
-  out_dir <- resolve_out_dir(out_dir = out_dir, data_dir = data_dir, schema = schema)
+  in_dir  <- resolve_in_dir(raw_data_dir = raw_data_dir, schema = schema)
+  out_dir <- resolve_out_dir(data_dir = data_dir, schema = schema)
 
   if (!is.null(in_dir))  in_dir  <- normalizePath(in_dir,  mustWork = TRUE)
   if (!is.null(out_dir)) out_dir <- normalizePath(out_dir, mustWork = FALSE)
@@ -340,32 +339,28 @@ resolve_dirs <- function(in_dir = NULL, out_dir = NULL,
 
 #' @keywords internal
 #' @noRd
-resolve_raw_dir <- function(in_dir = NULL, raw_data_dir = NULL, schema) {
-  if (!is.null(in_dir)) return(in_dir)
-
-  if (!is.null(raw_data_dir)) {
-    if (nzchar(raw_data_dir)) return(file.path(raw_data_dir, schema))
+resolve_in_dir <- function(raw_data_dir = NULL, schema = NULL) {
+  base <- if (!is.null(raw_data_dir) && nzchar(raw_data_dir)) {
+    raw_data_dir
+  } else {
+    Sys.getenv("RAW_DATA_DIR", unset = "")
   }
 
-  parent <- Sys.getenv("RAW_DATA_DIR", unset = "")
-  if (nzchar(parent)) return(file.path(parent, schema))
-
-  NULL
+  if (!nzchar(base)) return(NULL)
+  if (is.null(schema)) base else file.path(base, schema)
 }
 
 #' @keywords internal
 #' @noRd
-resolve_out_dir <- function(out_dir = NULL, data_dir = NULL, schema) {
-  if (!is.null(out_dir)) return(out_dir)
-
-  if (!is.null(data_dir)) {
-    if (nzchar(data_dir)) return(file.path(data_dir, schema))
+resolve_out_dir <- function(data_dir = NULL, schema = NULL) {
+  base <- if (!is.null(data_dir) && nzchar(data_dir)) {
+    data_dir
+  } else {
+    Sys.getenv("DATA_DIR", unset = "")
   }
 
-  parent <- Sys.getenv("DATA_DIR", unset = "")
-  if (nzchar(parent)) return(file.path(parent, schema))
-
-  NULL
+  if (!nzchar(base)) return(NULL)
+  if (is.null(schema)) base else file.path(base, schema)
 }
 
 # ---- PUBLIC: process one zip / many zips ----
@@ -429,57 +424,58 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL) {
 
 #' Process FFIEC call report bulk data
 #'
-#' High-level convenience wrapper around
-#' \code{process_ffiec_zip()} and \code{process_ffiec_zips()}.
+#' High-level convenience wrapper that processes FFIEC Call Report bulk
+#' zip files into Parquet format, optionally creating item-level metadata.
+#'
+#' Input zip files may be supplied explicitly or discovered automatically
+#' from a resolved raw data directory. Output Parquet files are written to
+#' a resolved data directory.
 #'
 #' @param zipfiles Optional character vector of FFIEC bulk zip file paths.
 #'   If \code{NULL}, zip files are discovered automatically from the resolved
-#'   input directory.
-#' @param in_dir Optional directory containing FFIEC bulk zip files (fully
-#'   qualified). If \code{NULL}, resolved using \code{raw_data_dir} and
-#'   \code{schema}, or the \code{RAW_DATA_DIR} environment variable.
-#' @param out_dir Optional output directory for generated Parquet files (fully
-#'   qualified). If \code{NULL}, resolved using \code{data_dir} and
-#'   \code{schema}, or the \code{DATA_DIR} environment variable.
-#' @param raw_data_dir Optional parent directory containing schema
-#'   subdirectories for raw FFIEC bulk zip files. Ignored if \code{in_dir}
-#'   is provided.
-#' @param data_dir Optional parent directory containing schema subdirectories
-#'   for Parquet output. Ignored if \code{out_dir} is provided.
+#'   raw data directory.
+#' @param raw_data_dir Optional parent directory containing FFIEC bulk zip
+#'   files. If provided and \code{schema} is not \code{NULL}, files are
+#'   expected under \code{file.path(raw_data_dir, schema)}. If \code{NULL},
+#'   the environment variable \code{RAW_DATA_DIR} is used.
+#' @param data_dir Optional parent directory for Parquet output. If provided
+#'   and \code{schema} is not \code{NULL}, files are written under
+#'   \code{file.path(data_dir, schema)}. If \code{NULL}, the environment
+#'   variable \code{DATA_DIR} is used.
 #' @param schema Schema name used to resolve input and output directories
-#'   (default \code{"ffiec"}).
-#' @param create_item_pqs Logical; if \code{TRUE}, create or update FFIEC item
-#'   metadata Parquet files as part of processing.
+#'   (default \code{"ffiec"}). If \code{NULL}, directories are resolved
+#'   directly without appending a schema subdirectory.
+#' @param create_item_pqs Logical; if \code{TRUE}, create or update FFIEC
+#'   item metadata Parquet files as part of processing.
 #' @param keep_process_data Logical; whether to write the processing log
 #'   returned by \code{ffiec_process()} to
-#'   \code{"ffiec_process_data.parquet"} in \code{out_dir}. If \code{NULL},
-#'   defaults to \code{TRUE} when \code{zipfiles} is \code{NULL} and
-#'   \code{FALSE} when \code{zipfiles} is supplied.
+#'   \code{"ffiec_process_data.parquet"} in the resolved output directory.
+#'   If \code{NULL}, defaults to \code{TRUE} when \code{zipfiles} is
+#'   \code{NULL} and \code{FALSE} when \code{zipfiles} is supplied.
 #'
 #' @return A tibble describing written Parquet files.
 #' @export
 ffiec_process <- function(zipfiles = NULL,
-                          in_dir = NULL, out_dir = NULL,
                           raw_data_dir = NULL, data_dir = NULL,
                           schema = "ffiec",
                           create_item_pqs = TRUE,
                           keep_process_data = NULL) {
 
   dirs <- resolve_dirs(
-    in_dir = in_dir, out_dir = out_dir,
-    raw_data_dir = raw_data_dir, data_dir = data_dir,
+    raw_data_dir = raw_data_dir,
+    data_dir = data_dir,
     schema = schema
   )
   in_dir  <- dirs$in_dir
   out_dir <- dirs$out_dir
 
   if (is.null(out_dir)) {
-    stop("Provide `out_dir`, or `data_dir`, or set DATA_DIR.", call. = FALSE)
+    stop("Provide `data_dir` or set `DATA_DIR`.", call. = FALSE)
   }
 
   # Only required if we need to discover zipfiles
   if (is.null(zipfiles) && is.null(in_dir)) {
-    stop("Provide `zipfiles`, or `in_dir`/`raw_data_dir`, or set RAW_DATA_DIR.", call. = FALSE)
+    stop("Provide `zipfiles`, or `raw_data_dir`, or set RAW_DATA_DIR.", call. = FALSE)
   }
 
   if (is.null(keep_process_data)) {
@@ -487,7 +483,8 @@ ffiec_process <- function(zipfiles = NULL,
   }
 
   if (is.null(zipfiles)) {
-    zipfiles <- ffiec_list_zips(in_dir = in_dir)$zipfile
+    zipfiles <- ffiec_list_zips(raw_data_dir = raw_data_dir,
+                                schema = schema)$zipfile
 
     keep <- stringr::str_detect(
       basename(zipfiles),
@@ -504,7 +501,8 @@ ffiec_process <- function(zipfiles = NULL,
   zipfiles <- normalizePath(zipfiles, mustWork = TRUE)
 
   if (isTRUE(create_item_pqs)) {
-    ffiec_create_item_pqs(out_dir = out_dir, overwrite = TRUE)
+    ffiec_create_item_pqs(data_dir = data_dir, schema = schema,
+                          overwrite = TRUE)
   }
 
   out <- purrr::map_dfr(
@@ -514,7 +512,8 @@ ffiec_process <- function(zipfiles = NULL,
   )
 
   if (isTRUE(create_item_pqs)) {
-    ffiec_create_item_schedules_pq(out_dir = out_dir, overwrite = TRUE)
+    ffiec_create_item_schedules_pq(data_dir = data_dir, schema = schema,
+                                   overwrite = TRUE)
   }
 
   if (isTRUE(keep_process_data)) {
@@ -533,13 +532,13 @@ ffiec_process <- function(zipfiles = NULL,
 #' Lists Parquet files produced by \code{ffiec_process()} and returns their
 #' filenames, full paths, and inferred FFIEC schedule identifiers.
 #'
-#' @param out_dir Optional directory containing FFIEC Parquet files. If \code{NULL},
-#'   the directory is resolved using \code{data_dir} and \code{schema}, or the
-#'   \code{DATA_DIR} environment variable.
-#' @param data_dir Optional parent directory containing schema subdirectories.
-#'   Ignored if \code{out_dir} is provided.
+#' @param data_dir Optional parent directory for Parquet output. If provided
+#'   and \code{schema} is not \code{NULL}, files are written under
+#'   \code{file.path(data_dir, schema)}. If \code{NULL}, the environment
+#'   variable \code{DATA_DIR} is used.
 #' @param schema Character scalar identifying the schema subdirectory
-#'   (default \code{"ffiec"}).
+#'   (default \code{"ffiec"}). Set to \code{NULL} to use the resolved
+#'   directory directly without appending a schema subdirectory.
 #' @param prefix Optional prefix prepended to Parquet file names
 #'   (default \code{""}).
 #'
@@ -555,16 +554,16 @@ ffiec_process <- function(zipfiles = NULL,
 #' # List FFIEC Parquet files using DATA_DIR/ffiec
 #' ffiec_list_pqs()
 #'
-#' # List files from an explicit directory
-#' ffiec_list_pqs(out_dir = "/data/parquet/ffiec")
+#' # List files from an explicit directory (no schema subdir)
+#' ffiec_list_pqs(data_dir = "/data/parquet/ffiec", schema = NULL)
 #' }
 #'
 #' @export
-ffiec_list_pqs <- function(out_dir = NULL, data_dir = NULL,
+ffiec_list_pqs <- function(data_dir = NULL,
                            schema = "ffiec", prefix = "") {
-  out_dir <- resolve_out_dir(out_dir = out_dir, data_dir = data_dir, schema = schema)
+  out_dir <- resolve_out_dir(data_dir = data_dir, schema = schema)
   if (is.null(out_dir)) {
-    stop("Provide `out_dir`, or `data_dir`, or set DATA_DIR.", call. = FALSE)
+    stop("Provide `data_dir` or set DATA_DIR.", call. = FALSE)
   }
 
   out_dir <- normalizePath(out_dir, mustWork = FALSE)

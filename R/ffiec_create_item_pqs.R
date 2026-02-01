@@ -4,25 +4,24 @@
 #' Parquet output directory, resolved using the same rules as
 #' [ffiec_list_pqs()].
 #'
-#' @param out_dir Optional output directory. If \code{NULL}, the directory is
-#'   resolved using \code{data_dir} and \code{schema}, or the \code{DATA_DIR}
-#'   environment variable.
-#' @param data_dir Optional parent directory containing schema subdirectories.
-#'   Ignored if \code{out_dir} is provided.
+#' @param data_dir Optional parent directory for Parquet output. If provided
+#'   and \code{schema} is not \code{NULL}, files are written under
+#'   \code{file.path(data_dir, schema)}. If \code{NULL}, the environment
+#'   variable \code{DATA_DIR} is used.
 #' @param schema Schema name used to resolve the Parquet directory
-#'   (default \code{"ffiec"}).
+#'   (default \code{"ffiec"}). Set to \code{NULL} to use the resolved
+#'   directory directly without appending a schema subdirectory.
 #' @param overwrite Logical; whether to overwrite existing files.
 #'
 #' @return A tibble with one row per file written and columns
 #'   \code{base_name}, \code{full_name}, \code{schedule}, and \code{written}.
 #'
 #' @export
-ffiec_create_item_pqs <- function(out_dir = NULL, data_dir = NULL,
+ffiec_create_item_pqs <- function(data_dir = NULL,
                                   schema = "ffiec", overwrite = FALSE) {
-  out_dir <- resolve_out_dir(out_dir = out_dir, data_dir = data_dir,
-                             schema = schema)
+  out_dir <- resolve_out_dir(data_dir = data_dir, schema = schema)
   if (is.null(out_dir)) {
-    stop("Provide `out_dir`, or `data_dir`, or set DATA_DIR.", call. = FALSE)
+    stop("Provide `data_dir` or set DATA_DIR.", call. = FALSE)
   }
 
   out_dir <- normalizePath(out_dir, mustWork = FALSE)

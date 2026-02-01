@@ -4,18 +4,17 @@
 \alias{ffiec_list_pqs}
 \title{List generated FFIEC Parquet files}
 \usage{
-ffiec_list_pqs(out_dir = NULL, data_dir = NULL, schema = "ffiec", prefix = "")
+ffiec_list_pqs(data_dir = NULL, schema = "ffiec", prefix = "")
 }
 \arguments{
-\item{out_dir}{Optional directory containing FFIEC Parquet files. If \code{NULL},
-the directory is resolved using \code{data_dir} and \code{schema}, or the
-\code{DATA_DIR} environment variable.}
-
-\item{data_dir}{Optional parent directory containing schema subdirectories.
-Ignored if \code{out_dir} is provided.}
+\item{data_dir}{Optional parent directory for Parquet output. If provided
+and \code{schema} is not \code{NULL}, files are written under
+\code{file.path(data_dir, schema)}. If \code{NULL}, the environment
+variable \code{DATA_DIR} is used.}
 
 \item{schema}{Character scalar identifying the schema subdirectory
-(default \code{"ffiec"}).}
+(default \code{"ffiec"}). Set to \code{NULL} to use the resolved
+directory directly without appending a schema subdirectory.}
 
 \item{prefix}{Optional prefix prepended to Parquet file names
 (default \code{""}).}
@@ -37,8 +36,8 @@ filenames, full paths, and inferred FFIEC schedule identifiers.
 # List FFIEC Parquet files using DATA_DIR/ffiec
 ffiec_list_pqs()
 
-# List files from an explicit directory
-ffiec_list_pqs(out_dir = "/data/parquet/ffiec")
+# List files from an explicit directory (no schema subdir)
+ffiec_list_pqs(data_dir = "/data/parquet/ffiec", schema = NULL)
 }
 
 }

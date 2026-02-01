@@ -4,23 +4,17 @@
 \alias{ffiec_create_item_pqs}
 \title{Create FFIEC item Parquet files}
 \usage{
-ffiec_create_item_pqs(
-  out_dir = NULL,
-  data_dir = NULL,
-  schema = "ffiec",
-  overwrite = FALSE
-)
+ffiec_create_item_pqs(data_dir = NULL, schema = "ffiec", overwrite = FALSE)
 }
 \arguments{
-\item{out_dir}{Optional output directory. If \code{NULL}, the directory is
-resolved using \code{data_dir} and \code{schema}, or the \code{DATA_DIR}
-environment variable.}
-
-\item{data_dir}{Optional parent directory containing schema subdirectories.
-Ignored if \code{out_dir} is provided.}
+\item{data_dir}{Optional parent directory for Parquet output. If provided
+and \code{schema} is not \code{NULL}, files are written under
+\code{file.path(data_dir, schema)}. If \code{NULL}, the environment
+variable \code{DATA_DIR} is used.}
 
 \item{schema}{Schema name used to resolve the Parquet directory
-(default \code{"ffiec"}).}
+(default \code{"ffiec"}). Set to \code{NULL} to use the resolved
+directory directly without appending a schema subdirectory.}
 
 \item{overwrite}{Logical; whether to overwrite existing files.}
 }

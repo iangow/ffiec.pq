@@ -8,7 +8,7 @@ ffiec_scan_pqs(
   conn,
   schedule = NULL,
   pq_file = NULL,
-  pq_dir = NULL,
+  data_dir = NULL,
   schema = "ffiec",
   prefix = "",
   union_by_name = TRUE
@@ -24,11 +24,13 @@ of the form \code{\{prefix\}\{schedule\}_YYYYMMDD.parquet} will be scanned.}
 \item{pq_file}{Optional character scalar giving a specific Parquet
 filename or glob pattern.}
 
-\item{pq_dir}{Optional directory used to locate Parquet files. The
-interpretation of this argument depends on \code{schema}; see Details.}
+\item{data_dir}{Optional parent directory for Parquet output. If provided
+and \code{schema} is not \code{NULL}, files are written under
+\code{file.path(data_dir, schema)}. If \code{NULL}, the environment
+variable \code{DATA_DIR} is used.}
 
 \item{schema}{Schema name used to resolve default directories
-(default \code{"ffiec"}). Set to \code{NULL} to treat \code{pq_dir}
+(default \code{"ffiec"}). Set to \code{NULL} to treat \code{data_dir}
 as the final Parquet directory.}
 
 \item{prefix}{Optional filename prefix used when the Parquet files
@@ -62,16 +64,16 @@ Parquet files are located using the following rules:
 \itemize{
   \item If \code{schema} is non-\code{NULL} (the default), Parquet files are
   expected to live in a subdirectory named \code{schema}. In this case,
-  \code{pq_dir} is interpreted as the parent directory, and files are read
-  from \code{file.path(pq_dir, schema)}. If \code{pq_dir} is \code{NULL},
+  \code{data_dir} is interpreted as the parent directory, and files are read
+  from \code{file.path(data_dir, schema)}. If \code{data_dir} is \code{NULL},
   the environment variable \code{DATA_DIR} is used as the parent directory.
 
-  \item If \code{schema = NULL}, \code{pq_dir} is interpreted as the final
+  \item If \code{schema = NULL}, \code{data_dir} is interpreted as the final
   directory containing Parquet files directly (no schema subdirectory is
-  appended). If \code{pq_dir} is \code{NULL}, \code{DATA_DIR} is used as the
+  appended). If \code{data_dir} is \code{NULL}, \code{DATA_DIR} is used as the
   Parquet directory.
 
-  \item If \code{pq_dir} is \code{NULL} and \code{DATA_DIR} is unset, and
+  \item If \code{data_dir} is \code{NULL} and \code{DATA_DIR} is unset, and
   \code{pq_file} is supplied, \code{pq_file} may be a fully qualified path
   to an existing Parquet file.
 }
@@ -92,10 +94,10 @@ con <- DBI::dbConnect(duckdb::duckdb())
 rc <- ffiec_scan_pqs(con, schedule = "rc")
 
 # Scan from a specific parent directory
-rc <- ffiec_scan_pqs(con, schedule = "rc", pq_dir = "/data/parquet")
+rc <- ffiec_scan_pqs(con, schedule = "rc", data_dir = "/data/parquet")
 
-# Treat pq_dir as the final directory (no schema subdir)
-rc <- ffiec_scan_pqs(con, schedule = "rc", pq_dir = "/data/ffiec", schema = NULL)
+# Treat data_dir as the final directory (no schema subdir)
+rc <- ffiec_scan_pqs(con, schedule = "rc", data_dir = "/data/ffiec", schema = NULL)
 
 # Scan a single Parquet file by name using DATA_DIR/ffiec
 por <- ffiec_scan_pqs(con, pq_file = "por_20231231.parquet")
