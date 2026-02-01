@@ -1,7 +1,7 @@
 Package: ffiec.pq
 Type: Package
 Title: Tools for Processing FFIEC Call Report Data
-Version: 0.3.1
+Version: 0.3.1.9000
 Description: Utilities for downloading, parsing, and processing FFIEC Call
     Report bulk data into columnar Parquet files suitable for analysis in R,
     Python, and SQL engines such as DuckDB.
