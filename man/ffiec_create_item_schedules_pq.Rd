@@ -10,7 +10,7 @@ ffiec_create_item_schedules_pq(
   schedules = NULL,
   overwrite = FALSE,
   file_name = "ffiec_item_schedules.parquet",
-  use_multicore = FALSE
+  use_multicore = TRUE
 )
 }
 \arguments{
@@ -34,7 +34,7 @@ except \code{"por"} and \code{"items"}.}
 \item{use_multicore}{Logical; whether to attempt parallel execution when
 reading Parquet metadata. If \code{TRUE} and the optional packages
 \pkg{future} and \pkg{furrr} are installed, operations are parallelized
-using a multisession plan. Defaults to \code{FALSE}.}
+using a \code{future::multisession} plan. Defaults to \code{TRUE}.}
 }
 \value{
 A tibble with one row describing the file written, including its

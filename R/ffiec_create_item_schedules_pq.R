@@ -23,7 +23,7 @@
 #' @param use_multicore Logical; whether to attempt parallel execution when
 #'   reading Parquet metadata. If \code{TRUE} and the optional packages
 #'   \pkg{future} and \pkg{furrr} are installed, operations are parallelized
-#'   using a multisession plan. Defaults to \code{FALSE}.
+#'   using a \code{future::multisession} plan. Defaults to \code{TRUE}.
 #'
 #' @details
 #' Parquet files are located using the same directory-resolution rules as
@@ -48,7 +48,7 @@ ffiec_create_item_schedules_pq <- function(data_dir = NULL,
                                            schedules = NULL,
                                            overwrite = FALSE,
                                            file_name = "ffiec_item_schedules.parquet",
-                                           use_multicore=FALSE) {
+                                           use_multicore=TRUE) {
   out_dir <- resolve_out_dir(data_dir = data_dir, schema = schema)
   if (is.null(out_dir)) {
     stop("Provide `data_dir` or set `DATA_DIR`.", call. = FALSE)
