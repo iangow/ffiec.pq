@@ -564,8 +564,9 @@ ffiec_process <- function(zipfiles = NULL,
 #' @param schema Character scalar identifying the schema subdirectory
 #'   (default \code{"ffiec"}). Set to \code{NULL} to use the resolved
 #'   directory directly without appending a schema subdirectory.
-#' @param prefix Optional prefix prepended to Parquet file names
-#'   (default \code{""}).
+#' @param all_files Logical; if \code{TRUE}, return all Parquet files in the
+#'   resolved directory. If \code{FALSE} (default), only files with names
+#'   ending in \code{_YYYYMMDD.parquet} are returned.
 #'
 #' @return A tibble with one row per Parquet file and columns:
 #' \describe{
@@ -585,7 +586,9 @@ ffiec_process <- function(zipfiles = NULL,
 #'
 #' @export
 ffiec_list_pqs <- function(data_dir = NULL,
-                           schema = "ffiec", prefix = "") {
+                           schema = "ffiec",
+                           all_files = FALSE) {
+
   out_dir <- resolve_out_dir(data_dir = data_dir, schema = schema)
   if (is.null(out_dir)) {
     stop("Provide `data_dir` or set DATA_DIR.", call. = FALSE)
@@ -593,9 +596,15 @@ ffiec_list_pqs <- function(data_dir = NULL,
 
   out_dir <- normalizePath(out_dir, mustWork = FALSE)
 
+  pattern <- if (isTRUE(all_files)) {
+    "\\.parquet$"
+  } else {
+    "_\\d{8}\\.parquet$"
+  }
+
   res <- list.files(
     out_dir,
-    pattern = "\\.parquet$",
+    pattern = pattern,
     full.names = TRUE
   )
 
@@ -604,7 +613,7 @@ ffiec_list_pqs <- function(data_dir = NULL,
   tibble::tibble(
     base_name = base_name,
     full_name = res,
-    schedule  = extract_schedule(base_name, prefix)
+    schedule  = extract_schedule(base_name)
   )
 }
 

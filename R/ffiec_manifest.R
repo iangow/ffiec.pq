@@ -268,3 +268,122 @@ ffiec_scan_pqs <- function(conn,
 
   dplyr::tbl(conn, dbplyr::sql(sql))
 }
+
+#' Check primary-key and non-NULL constraints in FFIEC Parquet files
+#'
+#' Scans FFIEC Parquet files into DuckDB and verifies that a specified
+#' set of columns jointly satisfies two integrity constraints:
+#'
+#' \itemize{
+#'   \item No missing values (non-NULL constraint)
+#'   \item Uniqueness across rows (primary-key constraint)
+#' }
+#'
+#' The function operates lazily via DuckDB and only materializes rows
+#' involved in violations. It is intended as a lightweight validation
+#' tool for Parquet files produced by [ffiec_process()].
+#'
+#' @param conn A valid DuckDB connection.
+#' @param schedule Optional character scalar giving the FFIEC schedule
+#'   to check (e.g. \code{"rc"}, \code{"rci"}). Passed to
+#'   [ffiec_scan_pqs()].
+#' @param cols Character vector of column names that together define
+#'   the primary key and must also be non-missing.
+#' @param data_dir Optional parent directory containing FFIEC Parquet
+#'   files. If \code{NULL}, the directory is resolved using the
+#'   \code{DATA_DIR} environment variable.
+#' @param schema Schema name used to resolve the Parquet directory
+#'   (default \code{"ffiec"}). Set to \code{NULL} to treat \code{data_dir}
+#'   as the final directory.
+#' @param prefix Optional filename prefix used when the Parquet files
+#'   were created (default \code{""}).
+#'
+#' @return A tibble with one row per checked schedule and columns:
+#' \describe{
+#'   \item{schedule}{FFIEC schedule identifier.}
+#'   \item{ok}{Logical; \code{TRUE} if no violations were detected.}
+#'   \item{null_violations}{A tibble listing columns and counts of
+#'     missing values, or empty if none were found.}
+#'   \item{pk_violations}{A tibble of duplicated key combinations,
+#'     or empty if the key is unique.}
+#' }
+#'
+#' @examples
+#' \dontrun{
+#' library(duckdb)
+#' con <- DBI::dbConnect(duckdb::duckdb())
+#'
+#' # Check IDRSSD-date uniqueness for the RC schedule
+#' ffiec_check_pq_keys(
+#'   conn = con,
+#'   schedule = "rc",
+#'   cols = c("IDRSSD", "date")
+#' )
+#'
+#' # Check all schedules
+#' schedules <- ffiec_list_pqs() |> dplyr::distinct(schedule) |> dplyr::pull()
+#' results <- purrr::map_dfr(
+#'   schedules,
+#'   \(s) ffiec_check_pq_keys(con, s, c("IDRSSD", "date"))
+#' )
+#' }
+#'
+#' @export
+ffiec_check_pq_keys <- function(conn,
+                                schedule = NULL,
+                                cols,
+                                data_dir = NULL,
+                                schema = "ffiec",
+                                prefix = "") {
+
+  df <- ffiec_scan_pqs(conn = conn,
+                       schedule = schedule,
+                       data_dir = data_dir,
+                       schema = schema,
+                       prefix = prefix,
+                       union_by_name = TRUE)
+
+  res <- check_pk_and_non_null(df, cols)
+
+  tibble::tibble(
+    schedule = schedule,
+    ok   = res$ok,
+    null_violations = list(res$null_violations),
+    pk_violations   = list(res$pk_violations)
+  )
+}
+
+#' @keywords internal
+#' @noRd
+check_pk_and_non_null <- function(df, cols) {
+  stopifnot(is.character(cols))
+
+  # ---- non-NULL check ----
+  nulls <- df |>
+    dplyr::summarise(
+      dplyr::across(
+        dplyr::all_of(cols),
+        ~ sum(is.na(.x), na.rm = TRUE),
+        .names = "{.col}"
+      )
+    ) |>
+    tidyr::pivot_longer(
+      dplyr::everything(),
+      names_to = "column",
+      values_to = "n_na"
+    ) |>
+    dplyr::filter(.data$n_na > 0L) |>
+    dplyr::collect()
+
+  # ---- primary key uniqueness check ----
+  dupes <- df |>
+    dplyr::count(dplyr::across(dplyr::all_of(cols))) |>
+    dplyr::filter(.data$n > 1L) |>
+    dplyr::collect()
+
+  list(
+    ok = nrow(nulls) == 0L && nrow(dupes) == 0L,
+    null_violations = nulls,
+    pk_violations   = dupes
+  )
+}

@@ -4,7 +4,7 @@
 \alias{ffiec_list_pqs}
 \title{List generated FFIEC Parquet files}
 \usage{
-ffiec_list_pqs(data_dir = NULL, schema = "ffiec", prefix = "")
+ffiec_list_pqs(data_dir = NULL, schema = "ffiec", all_files = FALSE)
 }
 \arguments{
 \item{data_dir}{Optional parent directory for Parquet output. If provided
@@ -16,8 +16,9 @@ variable \code{DATA_DIR} is used.}
 (default \code{"ffiec"}). Set to \code{NULL} to use the resolved
 directory directly without appending a schema subdirectory.}
 
-\item{prefix}{Optional prefix prepended to Parquet file names
-(default \code{""}).}
+\item{all_files}{Logical; if \code{TRUE}, return all Parquet files in the
+resolved directory. If \code{FALSE} (default), only files with names
+ending in \code{_YYYYMMDD.parquet} are returned.}
 }
 \value{
 A tibble with one row per Parquet file and columns:
