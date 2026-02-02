@@ -17,8 +17,8 @@ default_xbrl_to_readr <- function() {
   c(
     "xbrli:monetaryItemType"              = "d",
     "ffieci:nonNegativeMonetaryItemType"  = "d",
-    "xbrli:integerItemType"               = "d",
-    "xbrli:nonNegativeIntegerItemType"    = "d",
+    "xbrli:integerItemType"               = "i",
+    "xbrli:nonNegativeIntegerItemType"    = "i",
     "xbrli:pureItemType"                  = "c",
     "xbrli:booleanItemType"               = "l",
     "xbrli:stringItemType"                = "c"

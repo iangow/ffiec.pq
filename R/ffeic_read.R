@@ -395,6 +395,7 @@ make_colspec <- function(cols, schema, xbrl_to_readr, ffiec_col_overrides = char
         code,
         d = readr::col_double(),
         l = readr::col_logical(),
+        i = readr::col_integer(),
         c = readr::col_character(),
         D = readr::col_character(),  # <- parse later
         stop("Unknown override code for ", nm, ": '", code, "'", call. = FALSE)
@@ -403,6 +404,7 @@ make_colspec <- function(cols, schema, xbrl_to_readr, ffiec_col_overrides = char
       switch(
         schema_map[[nm]],
         d = readr::col_double(),
+        i = readr::col_integer(),
         l = readr::col_logical(),
         c = readr::col_character()
       )
