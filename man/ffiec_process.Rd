@@ -10,7 +10,8 @@ ffiec_process(
   data_dir = NULL,
   schema = "ffiec",
   create_item_pqs = TRUE,
-  keep_process_data = NULL
+  keep_process_data = NULL,
+  use_multicore = FALSE
 )
 }
 \arguments{
@@ -40,6 +41,11 @@ returned by \code{ffiec_process()} to
 \code{"ffiec_process_data.parquet"} in the resolved output directory.
 If \code{NULL}, defaults to \code{TRUE} when \code{zipfiles} is
 \code{NULL} and \code{FALSE} when \code{zipfiles} is supplied.}
+
+\item{use_multicore}{Logical; whether to attempt parallel execution when
+reading Parquet metadata. If \code{TRUE} and the optional packages
+\pkg{future} and \pkg{furrr} are installed, operations are parallelized
+using a multisession plan. Defaults to \code{FALSE}.}
 }
 \value{
 A tibble describing written Parquet files.

@@ -452,6 +452,10 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL) {
 #'   \code{"ffiec_process_data.parquet"} in the resolved output directory.
 #'   If \code{NULL}, defaults to \code{TRUE} when \code{zipfiles} is
 #'   \code{NULL} and \code{FALSE} when \code{zipfiles} is supplied.
+#' @param use_multicore Logical; whether to attempt parallel execution when
+#'   reading Parquet metadata. If \code{TRUE} and the optional packages
+#'   \pkg{future} and \pkg{furrr} are installed, operations are parallelized
+#'   using a multisession plan. Defaults to \code{FALSE}.
 #'
 #' @return A tibble describing written Parquet files.
 #' @export
@@ -459,7 +463,8 @@ ffiec_process <- function(zipfiles = NULL,
                           raw_data_dir = NULL, data_dir = NULL,
                           schema = "ffiec",
                           create_item_pqs = TRUE,
-                          keep_process_data = NULL) {
+                          keep_process_data = NULL,
+                          use_multicore = FALSE) {
 
   dirs <- resolve_dirs(
     raw_data_dir = raw_data_dir,
@@ -505,11 +510,31 @@ ffiec_process <- function(zipfiles = NULL,
                           overwrite = TRUE)
   }
 
-  out <- purrr::map_dfr(
-    zipfiles,
-    process_ffiec_zip,
-    out_dir = out_dir
-  )
+  use_parallel <- isTRUE(use_multicore) &&
+    requireNamespace("future", quietly = TRUE) &&
+    requireNamespace("furrr", quietly = TRUE)
+
+  out <- if (use_parallel) {
+
+    old_plan <- future::plan()
+    on.exit(future::plan(old_plan), add = TRUE)
+
+    future::plan(future::multisession)
+
+    furrr::future_map_dfr(
+      zipfiles,
+      process_ffiec_zip,
+      out_dir = out_dir
+    )
+
+  } else {
+
+    purrr::map_dfr(
+      zipfiles,
+      process_ffiec_zip,
+      out_dir = out_dir
+    )
+  }
 
   if (isTRUE(create_item_pqs)) {
     ffiec_create_item_schedules_pq(data_dir = data_dir, schema = schema,
