@@ -20,6 +20,10 @@
 #' @param overwrite Logical; whether to overwrite an existing output file.
 #' @param file_name Output Parquet file name
 #'   (default \code{"ffiec_item_schedules.parquet"}).
+#' @param use_multicore Logical; whether to attempt parallel execution when
+#'   reading Parquet metadata. If \code{TRUE} and the optional packages
+#'   \pkg{future} and \pkg{furrr} are installed, operations are parallelized
+#'   using a multisession plan. Defaults to \code{FALSE}.
 #'
 #' @details
 #' Parquet files are located using the same directory-resolution rules as
@@ -43,7 +47,8 @@ ffiec_create_item_schedules_pq <- function(data_dir = NULL,
                                            schema = "ffiec",
                                            schedules = NULL,
                                            overwrite = FALSE,
-                                           file_name = "ffiec_item_schedules.parquet") {
+                                           file_name = "ffiec_item_schedules.parquet",
+                                           use_multicore=FALSE) {
   out_dir <- resolve_out_dir(data_dir = data_dir, schema = schema)
   if (is.null(out_dir)) {
     stop("Provide `data_dir` or set `DATA_DIR`.", call. = FALSE)
@@ -92,13 +97,24 @@ ffiec_create_item_schedules_pq <- function(data_dir = NULL,
 
   # Helper: get schema names
   pq_cols <- function(path) {
-
     pq <- arrow::ParquetFileReader$create(path)
     cols <- pq$GetSchema()$names
     cols
   }
 
-  cols_list <- purrr::map(pqs$full_name, pq_cols)
+  cols_list <- if (isTRUE(use_multicore) &&
+                   requireNamespace("future", quietly = TRUE) &&
+                   requireNamespace("furrr", quietly = TRUE)) {
+
+    old_plan <- future::plan()
+    on.exit(future::plan(old_plan), add = TRUE)
+
+    future::plan(future::multisession)
+    furrr::future_map(pqs$full_name, pq_cols)
+
+  } else {
+    purrr::map(pqs$full_name, pq_cols)
+  }
 
   # --- build mapping ---
   ffiec_item_schedules <-
@@ -107,9 +123,9 @@ ffiec_create_item_schedules_pq <- function(data_dir = NULL,
       date = as.Date(stringr::str_extract(.data$base_name, "\\d{8}"), format = "%Y%m%d"),
       cols = cols_list
     ) |>
-    dplyr::select(.data$schedule, .data$date, .data$cols) |>
-    tidyr::unnest(.data$cols, names_repair = "minimal") |>
-    dplyr::rename(item = .data$cols) |>
+    dplyr::select("schedule", "date", "cols") |>
+    tidyr::unnest("cols", names_repair = "minimal") |>
+    dplyr::rename(item = "cols") |>
     dplyr::filter(.data$item != "IDRSSD") |>
     dplyr::group_by(.data$item, .data$schedule) |>
     dplyr::summarise(
