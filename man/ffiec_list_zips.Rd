@@ -4,17 +4,28 @@
 \alias{ffiec_list_zips}
 \title{List FFIEC bulk zip files}
 \usage{
-ffiec_list_zips(raw_data_dir = NULL, schema = "ffiec")
+ffiec_list_zips(raw_data_dir = NULL, schema = "ffiec", type = "tsv")
 }
 \arguments{
-\item{raw_data_dir}{Optional parent directory containing FFIEC bulk zip
-files. If provided and \code{schema} is not \code{NULL}, files are
+\item{raw_data_dir}{Optional parent directory containing FFIEC bulk
+zip files. If provided and \code{schema} is not \code{NULL}, files are
 expected under \code{file.path(raw_data_dir, schema)}. If \code{NULL},
 the environment variable \code{RAW_DATA_DIR} is used.}
 
 \item{schema}{Schema name used to resolve the input directory
 (default \code{"ffiec"}). Set to \code{NULL} to use the resolved
 directory directly without appending a schema subdirectory.}
+
+\item{type}{Character scalar indicating the bulk file type to list.
+Supported values are:
+\describe{
+  \item{\code{"tsv"}}{Tab-delimited Call Report bulk files
+    (filenames of the form
+    \code{"FFIEC CDR Call Bulk All Schedules MMDDYYYY.zip"}).}
+  \item{\code{"xbrl"}}{XBRL Call Report bulk files
+    (filenames of the form
+    \code{"FFIEC CDR Call Bulk XBRL MMDDYYYY.zip"}).}
+}}
 }
 \value{
 A tibble with columns:
@@ -24,25 +35,27 @@ A tibble with columns:
 }
 }
 \description{
-Scans a directory for FFIEC “Call Bulk All Schedules” zip files and returns
-a tibble with the zipfile paths and report dates parsed from the filenames.
+Scans a directory for FFIEC Call Report bulk zip files and returns
+a tibble with zipfile paths and report dates parsed from the filenames.
 }
 \details{
-This function is typically used to discover bulk zip files prior to calling
-[ffiec_process()].
+This function is typically used to discover bulk zip files prior to
+calling [ffiec_process()].
 
 
-Filenames are expected to contain an 8-digit MMDDYYYY date token
-(e.g., \code{"FFIEC CDR Call Bulk All Schedules 12312022.zip"}), which
-is parsed and returned as a \code{Date}. An error is raised if any
-matching file does not conform to this convention.
+Filenames are expected to contain an 8-digit \code{MMDDYYYY} date token,
+which is parsed and returned as a \code{Date}. An error is raised if any
+matching file does not conform to this naming convention.
 }
 \examples{
 \dontrun{
-# List bulk zip files using RAW_DATA_DIR/ffiec
+# List TSV bulk zip files using RAW_DATA_DIR/ffiec
 ffiec_list_zips()
 
-# List bulk zip files from an explicit directory (no schema subdir)
+# List XBRL bulk zip files
+ffiec_list_zips(type = "xbrl")
+
+# List bulk zip files from an explicit directory (no schema subdirectory)
 ffiec_list_zips(raw_data_dir = "/data/raw/ffiec", schema = NULL)
 }
 

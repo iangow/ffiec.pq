@@ -1,24 +1,33 @@
 #' List FFIEC bulk zip files
 #'
-#' Scans a directory for FFIEC “Call Bulk All Schedules” zip files and returns
-#' a tibble with the zipfile paths and report dates parsed from the filenames.
+#' Scans a directory for FFIEC Call Report bulk zip files and returns
+#' a tibble with zipfile paths and report dates parsed from the filenames.
 #'
-#' This function is typically used to discover bulk zip files prior to calling
-#' [ffiec_process()].
+#' This function is typically used to discover bulk zip files prior to
+#' calling [ffiec_process()].
 #'
-#' @param raw_data_dir Optional parent directory containing FFIEC bulk zip
-#'   files. If provided and \code{schema} is not \code{NULL}, files are
+#' @param raw_data_dir Optional parent directory containing FFIEC bulk
+#'   zip files. If provided and \code{schema} is not \code{NULL}, files are
 #'   expected under \code{file.path(raw_data_dir, schema)}. If \code{NULL},
 #'   the environment variable \code{RAW_DATA_DIR} is used.
 #' @param schema Schema name used to resolve the input directory
 #'   (default \code{"ffiec"}). Set to \code{NULL} to use the resolved
 #'   directory directly without appending a schema subdirectory.
+#' @param type Character scalar indicating the bulk file type to list.
+#'   Supported values are:
+#'   \describe{
+#'     \item{\code{"tsv"}}{Tab-delimited Call Report bulk files
+#'       (filenames of the form
+#'       \code{"FFIEC CDR Call Bulk All Schedules MMDDYYYY.zip"}).}
+#'     \item{\code{"xbrl"}}{XBRL Call Report bulk files
+#'       (filenames of the form
+#'       \code{"FFIEC CDR Call Bulk XBRL MMDDYYYY.zip"}).}
+#'   }
 #'
 #' @details
-#' Filenames are expected to contain an 8-digit MMDDYYYY date token
-#' (e.g., \code{"FFIEC CDR Call Bulk All Schedules 12312022.zip"}), which
-#' is parsed and returned as a \code{Date}. An error is raised if any
-#' matching file does not conform to this convention.
+#' Filenames are expected to contain an 8-digit \code{MMDDYYYY} date token,
+#' which is parsed and returned as a \code{Date}. An error is raised if any
+#' matching file does not conform to this naming convention.
 #'
 #' @return A tibble with columns:
 #' \describe{
@@ -28,16 +37,20 @@
 #'
 #' @examples
 #' \dontrun{
-#' # List bulk zip files using RAW_DATA_DIR/ffiec
+#' # List TSV bulk zip files using RAW_DATA_DIR/ffiec
 #' ffiec_list_zips()
 #'
-#' # List bulk zip files from an explicit directory (no schema subdir)
+#' # List XBRL bulk zip files
+#' ffiec_list_zips(type = "xbrl")
+#'
+#' # List bulk zip files from an explicit directory (no schema subdirectory)
 #' ffiec_list_zips(raw_data_dir = "/data/raw/ffiec", schema = NULL)
 #' }
 #'
 #' @export
 ffiec_list_zips <- function(raw_data_dir = NULL,
-                            schema = "ffiec") {
+                            schema = "ffiec",
+                            type = "tsv") {
 
   in_dir <- resolve_in_dir(raw_data_dir = raw_data_dir, schema = schema)
 
@@ -47,9 +60,16 @@ ffiec_list_zips <- function(raw_data_dir = NULL,
 
   in_dir <- normalizePath(in_dir, mustWork = FALSE)
 
+  pattern <- switch(
+    type,
+    tsv  = "^FFIEC CDR Call Bulk All Schedules \\d{8}\\.zip$",
+    xbrl = "^FFIEC CDR Call Bulk XBRL \\d{8}\\.zip$",
+    stop("Unknown type: ", type, call. = FALSE)
+  )
+
   files <- list.files(
     in_dir,
-    pattern = "^FFIEC CDR Call Bulk All Schedules \\d{8}\\.zip$",
+    pattern = pattern,
     full.names = TRUE
   )
 
