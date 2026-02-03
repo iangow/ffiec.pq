@@ -55,10 +55,6 @@ ffiec_schema_db <- copy_to(db, ffiec_schema)
 
 xbrl <- ffiec_scan_pqs(db, "xbrl") |> rename(name = item)
 xbrl |>
-  count(date) |>
-  arrange(desc(date))
-
-xbrl |>
   distinct(date) |>
   count()
 
