@@ -591,7 +591,7 @@ fix_pure_percent_cols <- function(df, schema) {
       if (is.character(x) && any(grepl("%", x, fixed = TRUE), na.rm = TRUE)) {
         pct_to_prop(x)
       } else {
-        x
+        as.double(x)
       }
     }))
 }
