@@ -1,9 +1,13 @@
+#' @keywords internal
+#' @noRd
 extract_schedule_one <- function(path, prefix = "") {
   x <- basename(path)
   if (nzchar(prefix) && startsWith(x, prefix)) x <- substr(x, nchar(prefix) + 1L, nchar(x))
   sub("_\\d{8}\\.parquet$", "", x)
 }
 
+#' @keywords internal
+#' @noRd
 pq_cols_by_arrow_type <- function(path) {
   pq  <- arrow::ParquetFileReader$create(path)
   sch <- pq$GetSchema()
@@ -14,19 +18,8 @@ pq_cols_by_arrow_type <- function(path) {
   )
 }
 
-pqs <-
-  ffiec.pq::ffiec_list_pqs() |>
-  dplyr::filter(stringr::str_detect(base_name, "20250930"),
-                !schedule %in% c("por", "xbrl"),
-                !stringr::str_starts(base_name, "ffiec")) |>
-  dplyr::pull(full_name)
-
-stopifnot(
-  is.character(pqs),
-  length(pqs) > 0,
-  all(file.exists(pqs))
-)
-
+#' @keywords internal
+#' @noRd
 get_long <- function(conn, pq, dtype = "Float64", prefix = "") {
   stopifnot(DBI::dbIsValid(conn), length(pq) == 1L)
 
@@ -47,7 +40,7 @@ get_long <- function(conn, pq, dtype = "Float64", prefix = "") {
       DBI::dbQuoteString(conn, normalizePath(pq, mustWork = TRUE))
     ))
   ) |>
-    dplyr::select(IDRSSD, date, dplyr::all_of(cols))
+    dplyr::select("IDRSSD", "date", dplyr::all_of(cols))
 
   sql <- paste0(
     "SELECT IDRSSD, date, ",
@@ -64,6 +57,8 @@ get_long <- function(conn, pq, dtype = "Float64", prefix = "") {
   dplyr::tbl(conn, dplyr::sql(sql))
 }
 
+#' @keywords internal
+#' @noRd
 get_longs <- function(conn, pqs, dtype = "Float64", prefix = "") {
   dfs <- lapply(pqs, function(x) get_long(conn, x, dtype = dtype, prefix = prefix))
   dfs <- Filter(Negate(is.null), dfs)
@@ -71,11 +66,22 @@ get_longs <- function(conn, pqs, dtype = "Float64", prefix = "") {
   Reduce(dplyr::union_all, dfs)
 }
 
-get_longs_agg <- function(conn, pqs, dtype = "Float64",
-                          prefix = "", distinct = TRUE) {
+arrow_types <- c(
+  float = "Float64",
+  int   = "Int32",
+  str   = "Utf8",
+  date  = "Date32",
+  bool  = "Boolean"
+)
+
+#' @keywords internal
+#' @noRd
+make_long_pq <- function(conn, pqs, dtype = "float", out_dir, date_raw,
+                          prefix = "", distinct = TRUE, overwrite = TRUE) {
   stopifnot(DBI::dbIsValid(conn))
 
-  long_tbl <- get_longs(conn, pqs, dtype = dtype, prefix = prefix)
+  long_tbl <- get_longs(conn, pqs, dtype = arrow_types[[dtype]],
+                        prefix = prefix)
   long_sql <- dbplyr::sql_render(long_tbl)
 
   sched_expr <- if (isTRUE(distinct)) {
@@ -92,9 +98,12 @@ get_longs_agg <- function(conn, pqs, dtype = "Float64",
 
   out <- dplyr::tbl(conn, dplyr::sql(sql))
   assert_no_dups(conn, out, keys = c("IDRSSD", "date", "item"))
-  out
+  out_path <- file.path(out_dir, sprintf("%s%s_%s.parquet", prefix, dtype, date_raw))
+  copy_to_parquet(conn, out, path = out_path, overwrite = overwrite)
 }
 
+#' @keywords internal
+#' @noRd
 assert_no_dups <- function(conn, tbl, keys = c("IDRSSD", "date", "item")) {
   stopifnot(DBI::dbIsValid(conn), is.character(keys), length(keys) > 0L)
 
@@ -120,10 +129,21 @@ assert_no_dups <- function(conn, tbl, keys = c("IDRSSD", "date", "item")) {
   invisible(TRUE)
 }
 
-db <- DBI::dbConnect(duckdb::duckdb())
+#' @keywords internal
+#' @noRd
+copy_to_parquet <- function(conn, tbl, path, overwrite = TRUE) {
+  stopifnot(DBI::dbIsValid(conn), length(path) == 1L)
 
-get_longs_agg(db, pqs, dtype = "Float64")
-get_longs_agg(db, pqs, dtype = "Int32")
-get_longs_agg(db, pqs, dtype = "Date32")
-get_longs_agg(db, pqs, dtype = "Utf8")
-get_longs_agg(db, pqs, dtype = "Boolean")
+  path <- normalizePath(path, mustWork = FALSE)
+  if (file.exists(path) && !isTRUE(overwrite)) {
+    stop("File exists: ", path, call. = FALSE)
+  }
+
+  sql <- paste0(
+    "COPY (", dbplyr::sql_render(tbl), ")\n",
+    "TO ", DBI::dbQuoteString(conn, path), " (FORMAT PARQUET)"
+  )
+
+  DBI::dbExecute(conn, sql)
+  invisible(path)
+}

@@ -233,7 +233,7 @@ process_zip_schedules <- function(zipfile, inside_files, schema,
       kind        = schedule,                 # <-- merge schedule/kind
       date_raw    = date_raw,
       date        = date,
-      parquet     = basename(out_path),
+      parquet     = out_path,
       zipfile     = basename(zipfile),
       n_parts     = n_parts,
       repairs     = list(repairs),
@@ -381,13 +381,15 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL) {
 
   inside <- get_cr_files(zipfile)
 
+  temp_dir <- tempdir()
+
   # ---- schedules (returns list(out_dir=..., files=...)) ----
   sched_res <- process_zip_schedules(
     zipfile       = zipfile,
     inside_files  = inside,
     schema        = schema_tbl,
     xbrl_to_readr = xbrl_to_readr,
-    out_dir       = out_dir
+    out_dir       = temp_dir
   )
 
   sched <- sched_res$files |>
@@ -396,6 +398,26 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL) {
       repairs     = dplyr::coalesce(.data$repairs, list(character(0))),
       inner_files = dplyr::coalesce(.data$inner_files, list(character(0)))
     )
+
+  pqs <- sched$parquet
+  date_raw <-
+    zipfile |>
+    basename() |>
+    stringr::str_extract("\\d{8}") |>
+    as.Date(format = "%m%d%Y") |>
+    format("%Y%m%d")
+
+  db <- DBI::dbConnect(duckdb::duckdb())
+
+  for (dtype in names(arrow_types)) {
+    make_long_pq(conn = db,
+                 pqs = pqs,
+                 dtype = dtype,
+                 out_dir = out_dir,
+                 date_raw = date_raw,
+                 prefix = "ffiec_")
+  }
+  DBI::dbDisconnect(db)
 
   # ---- POR (returns tibble) ----
   por <- process_zip_por(
@@ -536,7 +558,7 @@ ffiec_process <- function(zipfiles = NULL,
     )
   }
 
-  if (isTRUE(create_item_pqs)) {
+  if (FALSE) {
     ffiec_create_item_schedules_pq(data_dir = data_dir, schema = schema,
                                    overwrite = TRUE)
   }

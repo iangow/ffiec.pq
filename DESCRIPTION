@@ -24,7 +24,8 @@ Imports:
     stringr,
     tibble,
     DBI,
-    dbplyr
+    dbplyr,
+    duckdb
 Suggests:
     tidyr,
     future,
