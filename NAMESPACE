@@ -3,6 +3,7 @@
 export(ffiec_check_pq_keys)
 export(ffiec_list_pqs)
 export(ffiec_list_zips)
+export(ffiec_pivot)
 export(ffiec_process)
 export(ffiec_process_xbrls)
 export(ffiec_scan_pqs)
