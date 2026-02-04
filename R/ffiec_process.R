@@ -376,7 +376,7 @@ resolve_out_dir <- function(data_dir = NULL, schema = NULL) {
 #' @noRd
 process_ffiec_zip <- function(zipfile, out_dir = NULL) {
 
-  schema_tbl   <- get_ffiec_schema()
+  schema_tbl   <- ffiec_schema
   xbrl_to_readr <- default_xbrl_to_readr()
 
   inside <- get_cr_files(zipfile)

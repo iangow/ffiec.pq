@@ -139,30 +139,58 @@ fix_item_name_case <- function(x) {
     fix_lower_words(lower_words)
 }
 
-# Union of all columns across non-POR schedules
-cols_union <-
-  pqs |>
-  filter(!schedule %in% c("items", "por")) |>
-  filter(str_detect(base_name, "_\\d{8}\\.parquet$")) |>
-  pull(full_name) |>
-  map(pq_cols) |>
-  unlist(use.names = FALSE) |>
-  unique() |>
-  sort()
+db <- DBI::dbConnect(duckdb::duckdb())
+
+ffiec_floats <-
+  ffiec.pq::ffiec_scan_pqs(db, "ffiec_float") |>
+  distinct(item) |>
+  mutate(data_type = "Float64")
+
+ffiec_ints <-
+  ffiec.pq::ffiec_scan_pqs(db, "ffiec_int") |>
+  distinct(item) |>
+  mutate(data_type = "Int32")
+
+ffiec_strs <-
+  ffiec.pq::ffiec_scan_pqs(db, "ffiec_str") |>
+  distinct(item) |>
+  mutate(data_type = "String")
+
+ffiec_bools <-
+  ffiec.pq::ffiec_scan_pqs(db, "ffiec_bool") |>
+  distinct(item) |>
+  mutate(data_type = "Boolean")
+
+ffiec_dates <-
+  ffiec.pq::ffiec_scan_pqs(db, "ffiec_date") |>
+  distinct(item) |>
+  mutate(data_type = "Date32")
+
+ffeic_all <-
+  ffiec_floats |>
+  union_all(ffiec_ints) |>
+  union_all(ffiec_strs) |>
+  union_all(ffiec_bools) |>
+  union_all(ffiec_dates) |>
+  compute()
+
+ffiec.pq:::assert_no_dups(db, ffeic_all, keys = "item")
 
 # ---- ffiec_items ----
 ffiec_items <-
-  mdrm |>
-  filter(item %in% cols_union) |>
-  select(item, mnemonic, item_code, item_name) |>
+  ffeic_all |>
+  collect() |>
+  left_join(mdrm, by = join_by(item)) |>
+  select(item, mnemonic, item_code, item_name, data_type) |>
   mutate(item_name = fix_item_name_case(item_name)) |>
   distinct() |>
   arrange(item)
 
 # ---- ffiec_item_details ----
 ffiec_item_details <-
-  mdrm |>
-  filter(item %in% cols_union) |>
+  ffeic_all |>
+  collect() |>
+  left_join(mdrm, by = join_by(item)) |>
   select(
     item, reporting_form, start_date, end_date, confidentiality,
     description, seriesglossary, itemtype

@@ -1,5 +1,9 @@
 #' Create FFIEC item–schedule coverage Parquet file
 #'
+#' \strong{This function is obsolete, as the code now generates data}
+#' \strong{in a different format. I have retained this function in case I}
+#' \strong{ever decide to revert to the older format.}
+#'
 #' Scans FFIEC schedule Parquet files and creates a Parquet file describing
 #' which items (columns) appear in which schedules and on which reporting
 #' dates. Dates are inferred from Parquet file names.
@@ -42,7 +46,8 @@
 #' ffiec_create_item_schedules_pq(schedules = c("rc", "rcn"))
 #' }
 #'
-#' @export
+#' @keywords internal
+#' @noRd
 ffiec_create_item_schedules_pq <- function(data_dir = NULL,
                                            schema = "ffiec",
                                            schedules = NULL,

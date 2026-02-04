@@ -5,7 +5,7 @@
 #'
 #' Each item corresponds to a unique combination of mnemonic and item code
 #' (e.g., \code{"RCFD0010"}). Item names are lightly normalized for presentation
-#' (sentence case with protected regulatory acronyms preserved).
+#' (proper case for protected regulatory acronyms is preserved).
 #'
 #' @format A tibble with one row per item and the following columns:
 #' \describe{
@@ -14,6 +14,7 @@
 #'   \item{mnemonic}{Schedule mnemonic (e.g., \code{"RCFD"}, \code{"RCON"}).}
 #'   \item{item_code}{Four-character FFIEC item code (character).}
 #'   \item{item_name}{Human-readable item name, normalized for presentation.}
+#'   \item{data_type}{Arrow data type used for item.}
 #' }
 #'
 #' @details

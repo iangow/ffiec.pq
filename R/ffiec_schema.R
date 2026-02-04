@@ -11,4 +11,6 @@
 #' }
 #'
 #' @source Derived from FFIEC taxonomy concepts.xsd files (see data-raw/make_ffiec_schema.R).
-"ffiec_schema"
+#' @keywords internal
+#' @noRd
+NULL

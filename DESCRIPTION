@@ -29,7 +29,8 @@ Imports:
 Suggests:
     tidyr,
     future,
-    furrr
+    furrr,
+    xml2
 RoxygenNote: 7.3.3
 Depends: 
     R (>= 4.1.0)

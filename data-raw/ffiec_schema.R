@@ -191,4 +191,4 @@ ffiec_schema <-
   union(new_types) |>
   collect()
 
-usethis::use_data(ffiec_schema, overwrite = TRUE)
+usethis::use_data(ffiec_schema, internal = TRUE, overwrite = TRUE)

@@ -16,7 +16,8 @@
 #' @return A tibble with one row per file written and columns
 #'   \code{base_name}, \code{full_name}, \code{schedule}, and \code{written}.
 #'
-#' @export
+#' @keywords internal
+#' @noRd
 ffiec_create_item_pqs <- function(data_dir = NULL,
                                   schema = "ffiec", overwrite = FALSE) {
   out_dir <- resolve_out_dir(data_dir = data_dir, schema = schema)
