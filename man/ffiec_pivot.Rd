@@ -10,7 +10,7 @@ ffiec_pivot(
   names_from = "item",
   values_from = "value",
   items = NULL,
-  values_fn = "any_value"
+  values_fn = "first"
 )
 }
 \arguments{

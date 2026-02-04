@@ -374,7 +374,7 @@ resolve_out_dir <- function(data_dir = NULL, schema = NULL) {
 #'   the multi-zip function). Defaults to \code{"ffiec"}.
 #' @keywords internal
 #' @noRd
-process_ffiec_zip <- function(zipfile, out_dir = NULL) {
+process_ffiec_zip <- function(zipfile, out_dir = NULL, use_multicore = FALSE) {
 
   schema_tbl   <- ffiec_schema
   xbrl_to_readr <- default_xbrl_to_readr()
@@ -408,6 +408,12 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL) {
     format("%Y%m%d")
 
   db <- DBI::dbConnect(duckdb::duckdb())
+
+  if (use_multicore) {
+    # Limit DuckDB to a single thread if its operating within
+    # a multithreaded loop.
+    dbExecute(db, "SET THREADS = 1")
+  }
 
   for (dtype in names(arrow_types)) {
     make_long_pq(conn = db,
@@ -546,7 +552,8 @@ ffiec_process <- function(zipfiles = NULL,
     furrr::future_map_dfr(
       zipfiles,
       process_ffiec_zip,
-      out_dir = out_dir
+      out_dir = out_dir,
+      use_multicore = use_multicore
     )
 
   } else {
@@ -554,7 +561,8 @@ ffiec_process <- function(zipfiles = NULL,
     purrr::map_dfr(
       zipfiles,
       process_ffiec_zip,
-      out_dir = out_dir
+      out_dir = out_dir,
+      use_multicore = use_multicore
     )
   }
 

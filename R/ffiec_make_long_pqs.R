@@ -77,7 +77,7 @@ arrow_types <- c(
 #' @keywords internal
 #' @noRd
 make_long_pq <- function(conn, pqs, dtype = "float", out_dir, date_raw,
-                          prefix = "", distinct = TRUE, overwrite = TRUE) {
+                          prefix = "", distinct = FALSE, overwrite = TRUE) {
   stopifnot(DBI::dbIsValid(conn))
 
   long_tbl <- get_longs(conn, pqs, dtype = arrow_types[[dtype]],
@@ -85,15 +85,16 @@ make_long_pq <- function(conn, pqs, dtype = "float", out_dir, date_raw,
   long_sql <- dbplyr::sql_render(long_tbl)
 
   sched_expr <- if (isTRUE(distinct)) {
-    "list_distinct(list(schedule)) AS schedule"
+    "list_sort(list_distinct(list(schedule))) AS schedule"
   } else {
-    "list(schedule) AS schedule"
+    "list_sort(list(schedule)) AS schedule"
   }
 
   sql <- paste0(
     "SELECT IDRSSD, date, item, value, ", sched_expr, "\n",
     "FROM (", long_sql, ") AS x\n",
-    "GROUP BY 1,2,3,4"
+    "GROUP BY 1, 2, 3, 4\n",
+    "ORDER BY 1, 2, 3"
   )
 
   out <- dplyr::tbl(conn, dplyr::sql(sql))
