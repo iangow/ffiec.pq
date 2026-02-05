@@ -18,6 +18,22 @@ pq_cols_by_arrow_type <- function(path) {
   )
 }
 
+pq_cols <- function(path, drop = c("IDRSSD", "date")) {
+  sch <- arrow::ParquetFileReader$create(path)$GetSchema()
+  setdiff(sch$names, drop)
+}
+
+#' @keywords internal
+#' @noRd
+get_schedule <- function(pq, prefix = "") {
+  stopifnot(length(pq) == 1L)
+  schedule <- extract_schedule_one(pq, prefix = prefix)
+  item <- pq_cols(pq)
+  if(length(item) >= 1) {
+    data.frame(item, schedule)
+  }
+}
+
 #' @keywords internal
 #' @noRd
 get_long <- function(conn, pq, dtype = "Float64", prefix = "") {
@@ -66,6 +82,15 @@ get_longs <- function(conn, pqs, dtype = "Float64", prefix = "") {
   Reduce(dplyr::union_all, dfs)
 }
 
+#' @keywords internal
+#' @noRd
+get_schedules <- function(pqs, prefix = "") {
+  dfs <- lapply(pqs, function(x) get_schedule(x, prefix = prefix))
+  dfs <- Filter(Negate(is.null), dfs)
+  stopifnot(length(dfs) > 0L)
+  Reduce(dplyr::union_all, dfs)
+}
+
 arrow_types <- c(
   float = "Float64",
   int   = "Int32",
@@ -84,14 +109,8 @@ make_long_pq <- function(conn, pqs, dtype = "float", out_dir, date_raw,
                         prefix = prefix)
   long_sql <- dbplyr::sql_render(long_tbl)
 
-  sched_expr <- if (isTRUE(distinct)) {
-    "list_sort(list_distinct(list(schedule))) AS schedule"
-  } else {
-    "list_sort(list(schedule)) AS schedule"
-  }
-
   sql <- paste0(
-    "SELECT IDRSSD, date, item, value, ", sched_expr, "\n",
+    "SELECT IDRSSD, date, item, value\n",
     "FROM (", long_sql, ") AS x\n",
     "GROUP BY 1, 2, 3, 4\n",
     "ORDER BY 1, 2, 3"
@@ -101,6 +120,17 @@ make_long_pq <- function(conn, pqs, dtype = "float", out_dir, date_raw,
   assert_no_dups(conn, out, keys = c("IDRSSD", "date", "item"))
   out_path <- file.path(out_dir, sprintf("%s%s_%s.parquet", prefix, dtype, date_raw))
   copy_to_parquet(conn, out, path = out_path, overwrite = overwrite)
+}
+
+#' @keywords internal
+#' @noRd
+make_schedule_pq <- function(pqs, out_dir, date_raw,
+                             prefix = "", overwrite = TRUE) {
+
+  schedule_tbl <- get_schedules(pqs, prefix = prefix)
+  out <- aggregate(schedule ~ item, schedule_tbl, c)
+  out_path <- file.path(out_dir, sprintf("%s%s_%s.parquet", prefix, "schedule", date_raw))
+  arrow::write_parquet(out, sink = out_path)
 }
 
 #' @keywords internal

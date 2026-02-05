@@ -423,6 +423,10 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL, use_multicore = FALSE) {
                  date_raw = date_raw,
                  prefix = "ffiec_")
   }
+  make_schedule_pq(pqs,
+                   out_dir = out_dir,
+                   date_raw = date_raw,
+                   prefix = "ffiec_")
   DBI::dbDisconnect(db)
 
   # ---- POR (returns tibble) ----
