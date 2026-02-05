@@ -104,20 +104,13 @@ make_long_pq <- function(conn, pqs, dtype = "float", out_dir, date_raw,
                           prefix = "", distinct = FALSE, overwrite = TRUE) {
   stopifnot(DBI::dbIsValid(conn))
 
-  long_tbl <- get_longs(conn, pqs, dtype = arrow_types[[dtype]],
-                        prefix = prefix)
-  long_sql <- dbplyr::sql_render(long_tbl)
+  out <-
+    get_longs(conn, pqs, dtype = arrow_types[[dtype]], prefix = prefix) |>
+    dplyr::distinct()
 
-  sql <- paste0(
-    "SELECT IDRSSD, date, item, value\n",
-    "FROM (", long_sql, ") AS x\n",
-    "GROUP BY 1, 2, 3, 4\n",
-    "ORDER BY 1, 2, 3"
-  )
-
-  out <- dplyr::tbl(conn, dplyr::sql(sql))
   assert_no_dups(conn, out, keys = c("IDRSSD", "date", "item"))
-  out_path <- file.path(out_dir, sprintf("%s%s_%s.parquet", prefix, dtype, date_raw))
+  out_path <- file.path(out_dir,
+                        sprintf("%s%s_%s.parquet", prefix, dtype, date_raw))
   copy_to_parquet(conn, out, path = out_path, overwrite = overwrite)
 }
 
