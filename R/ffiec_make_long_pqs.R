@@ -121,6 +121,7 @@ make_schedule_pq <- function(pqs, out_dir, date_raw,
 
   schedule_tbl <- get_schedules(pqs, prefix = prefix)
   out <- stats::aggregate(schedule ~ item, schedule_tbl, c)
+  out <- transform(out, date = as.Date(date_raw, "%Y%m%d"))
   out_path <- file.path(out_dir, sprintf("%s%s_%s.parquet", prefix, "schedules", date_raw))
   arrow::write_parquet(out, sink = out_path)
 }
