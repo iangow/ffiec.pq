@@ -59,8 +59,7 @@ get_long <- function(conn, pq, dtype = "Float64", prefix = "") {
     dplyr::select("IDRSSD", "date", dplyr::all_of(cols))
 
   sql <- paste0(
-    "SELECT IDRSSD, date, ",
-    DBI::dbQuoteString(conn, sched), " AS schedule, item, value\n",
+    "SELECT IDRSSD, date, item, value\n",
     "FROM (\n",
     "  UNPIVOT (", dbplyr::sql_render(subq), ")\n",
     "  ON COLUMNS(* EXCLUDE (IDRSSD, date))\n",
@@ -128,8 +127,8 @@ make_schedule_pq <- function(pqs, out_dir, date_raw,
                              prefix = "", overwrite = TRUE) {
 
   schedule_tbl <- get_schedules(pqs, prefix = prefix)
-  out <- aggregate(schedule ~ item, schedule_tbl, c)
-  out_path <- file.path(out_dir, sprintf("%s%s_%s.parquet", prefix, "schedule", date_raw))
+  out <- stats::aggregate(schedule ~ item, schedule_tbl, c)
+  out_path <- file.path(out_dir, sprintf("%s%s_%s.parquet", prefix, "schedules", date_raw))
   arrow::write_parquet(out, sink = out_path)
 }
 

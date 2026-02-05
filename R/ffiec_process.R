@@ -412,7 +412,7 @@ process_ffiec_zip <- function(zipfile, out_dir = NULL, use_multicore = FALSE) {
   if (use_multicore) {
     # Limit DuckDB to a single thread if its operating within
     # a multithreaded loop.
-    dbExecute(db, "SET THREADS = 1")
+    DBI::dbExecute(db, "SET THREADS = 1")
   }
 
   for (dtype in names(arrow_types)) {
