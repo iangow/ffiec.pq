@@ -1,0 +1,369 @@
+# Data curation: the case of Call Reports
+
+I recently ([Gow, 2026](#ref-Gow:2026aa)) proposed an extension to the
+data science “whole game” of [R for Data
+Science](https://r4ds.hadley.nz/whole-game) ([Wickham et al.,
+2023](#ref-Wickham:2023aa)). In Gow ([2026](#ref-Gow:2026aa)), I used
+Australian stock price data to illustrate the data curation process and,
+in this note, I use US bank “Call Report” data as a second illustration.
+In effect, I provide complete instructions for building a
+high-performance data library covering all Call Reports data provided by
+the FFIEC Bulk Data website that can be constructed in less than ten
+minutes on fast hardware (or a couple of hours on an older machine). I
+also give a few brief demonstrations of how to use the curated data,
+with examples for both R and Python. I conclude by discussing challenges
+encountered during processing and offering some observations about AI
+and data curation.
+
+My extension of the data science “whole game”—depicted in
+[Figure 1](#fig-whole-game) below—adds a *persist* step to the original
+version, groups it with *import* and *tidy* into a single process, which
+I call *Curate*. As a complement to the new *persist* step, I also add a
+*load* step to the *Understand* process.[^1]
+
+![A diagram displaying the data science
+workflow.](images/data-science.png)
+
+Figure 1: A representation of the data science workflow
+
+In this note, as in Gow ([2026](#ref-Gow:2026aa)), I focus on the data
+curation (*Curate*) process. My rationale for separating *Curate* from
+*Understand* is that I believe that thinking about these separately
+clarifies certain best practices in the curation of data. In Gow
+([2026](#ref-Gow:2026aa)), I used the notion of a service-level
+agreement to explain how the two processes can be delineated. My
+conception of *Curate* ([Gow, 2026](#ref-Gow:2026aa)) encompasses some
+tasks that are included in the *transform* step (part of the
+*Understand* process) of Wickham et al. ([2023](#ref-Wickham:2023aa)).
+
+While I will argue that even the sole analyst who will perform all three
+processes can benefit from thinking about *Curate* separate from
+*Understand*, it is perhaps easiest to conceive of the *Curate* and
+*Understand* processes as involving different individuals or
+organizational units of the “whole game” of a data analysis workflow. In
+Gow ([2026](#ref-Gow:2026aa)), I used the idea of a service-level
+agreement to delineate the division of responsibilities between the
+*Curate* and *Understand* teams. In effect, I will act as a
+self-appointed, single-person, unpaid *Curate* team and I imagine
+potential users of call report data as my *Understand* clients.
+
+> **Tip**
+>
+> This note was written and rendered with [Quarto](https://quarto.org)
+> using [RStudio](https://posit.co/products/open-source/rstudio/), an
+> integrated development environment (IDE) for working with R. The
+> source code for the original note is available
+> [here](https://raw.githubusercontent.com/iangow/notes/main/published/curate_call_reports.qmd)
+> and the latest PDF version is available
+> [here](https://raw.githubusercontent.com/iangow/notes/main/published/curate_call_reports.pdf).
+>
+> In writing the R portions of this note, I used the packages listed
+> below.[^2]
+>
+> I have not submitted `ffiec.pq` to CRAN. To install `ffiec.pq`, first
+> install the `pak` package using `install.packages("pak")`.[^3] Then,
+> use `pak` to install `ffiec.pq` by typing
+> `pak::pak("iangow/ffiec.pq")` in the R console.
+>
+> ``` r
+>
+> library(ffiec.pq)
+> library(tidyverse)
+> library(farr)
+> library(dbplyr)
+> library(DBI)
+> ```
+>
+> For the Python portion of this note, I believe that you need `polars`,
+> `pandas`, and `ffiec_data_collector` (if you use Python to get the zip
+> files). In generating some plots, I use `seaborn` and `matplotlib`,
+> but I don’t include the associated code for reasons of space. So
+> `pip install polars pandas ffiec_data_collector` probably suffices.
+
+## 1 Call Reports
+
+According to [its website](https://www.ffiec.gov/about/mission), the
+Federal Financial Institutions Examination Council (FFIEC) “is an
+interagency body … focused on promoting consistency in examination
+activities \[related to United States financial institutions\].” The
+FFIEC “does not regulate financial institutions \[and its\] jurisdiction
+is limited to prescribing uniform principles, standards, and report
+forms for the federal examination of financial institutions and making
+recommendations to promote uniformity in the supervision of financial
+institutions.”
+
+One of the services provided by the FFIEC is its “Central Data
+Repository’s Public Data Distribution website. Through [this
+site](https://cdr.ffiec.gov/public/ManageFacsimiles.aspx) you can obtain
+Reports of Condition and Income (Call Reports) for most FDIC-insured
+institutions. The information available on this site is updated to
+reflect the most recent data for both prior and current periods. The
+earliest data provided is from March 31, 2001.”
+
+Many academic studies use Call Report data. For example, Kashyap et al.
+([2002, p. 52](#ref-kashyap2002banks)) states “our data come from the
+‘Call Reports,’ the regulatory filings that all commercial banks having
+insured deposits submit each quarter. The Call Reports include detailed
+information on the composition of bank balance sheets and some
+additional data on off-balance-sheet items. These data are reported at
+the level of the individual bank.”
+
+While raw data are offered by the FFIEC, some work is required to
+arrange the data into a form amenable to further analysis. In other
+words, some curation of the data is required.
+
+Several commercial data providers offer the FFIEC data in a curated
+form, but accessing those requires an institutional or individual
+subscription. It appears that the Federal Reserve Bank of Chicago once
+provided a curated data set on its
+[website](https://www.chicagofed.org/banking/financial-institution-reports/commercial-bank-data),
+but no longer does so. WRDS provides Call Report data extracted from the
+same sources I used as part of its basic subscription. Of course, no
+commercial providers of the data provide the source code used to
+transform the raw data into the form they deliver it in.
+
+Other services provide “API wrappers” that allow users to access the
+data via the FFIEC API, but this approach is best suited to real-time
+feeds of small amounts of data. Collation of the data into a single
+local, comprehensive repository using this approach seems impractical
+given the scale of the data.
+
+Regardless of the availability of paid curation services, in this note I
+will imagine that such sources either do not exist or are unavailable to
+my hypothetical *Understand* clients and illustrate how one can curate
+Call Reports data from the FFIEC source.
+
+### 1.1 Getting the raw data
+
+The FFIEC [Bulk Data Download
+site](https://cdr.ffiec.gov/public/pws/downloadbulkdata.aspx) provides
+the Call Report data in two forms. The first is as zipped tab-delimited
+data files, one for each quarter. The second is as zipped XBRL data
+files, one for each quarter. At the time of writing, the standard
+approach to getting the complete data archive amounts to pointing and
+clicking to download each of the roughly 100 files for each format.[^4]
+
+The FFIEC data sets are not as amenable to automated downloading as
+those offered by other government agencies such as the SEC (see my
+earlier [note on XBRL
+data](https://iangow.github.io/notes/published/getting_dera_notes.html)),
+the PCAOB (see my [note on Form AP
+data](https://iangow.github.io/notes/form_ap_names.html)), or even the
+Federal Reserve itself (I used data from the [MDRM
+site](https://www.federalreserve.gov/apps/mdrm/) in preparing this
+note). However, a group of individuals has contributed the Python
+package `ffiec_data_collector` that we can use to collect the data.[^5]
+
+To install this Python package, you first need to [install
+Python](https://www.python.org/downloads/) and then install the
+`ffiec_data_collector` using a command like
+`pip install ffiec_data_collector`.
+
+As discussed in [Appendix
+E](https://iangow.github.io/far_book/parquet-wrds.html) of Gow and Ding
+([2024](#ref-Gow_2024)), I organize my raw and processed data in
+repositories comprising a parent directory and several sub-directories
+corresponding to various data sources and projects. For some data sets,
+this approach to organization facilitates switching code from using
+(say) data sources provided by Wharton Research Data Services (WRDS) to
+using local data in my data repository. I will adopt that approach for
+the purposes of this note.
+
+As the location of my “raw data” repository is found in the the
+environment variable `RAW_DATA_DIR`, I can identify that location in
+Python easily. The following code specifies the download directory as
+the directory `ffiec` within my raw data repository.[^6]
+
+``` python
+import os
+from pathlib import Path
+print(os.environ['RAW_DATA_DIR'])
+download_dir = Path(os.environ['RAW_DATA_DIR']) / "ffiec"
+```
+
+Having specified a location to put the downloaded files, it is a simple
+matter to adapt a script provided on the [package
+website](https://ffiec-data-collector.readthedocs.io/en/latest/getting_started.html#basic-usage)
+to download the raw data files.
+
+``` python
+import ffiec_data_collector as fdc
+import time
+
+downloader = fdc.FFIECDownloader(download_dir=download_dir)
+
+periods = downloader.select_product(fdc.Product.CALL_SINGLE)
+
+results = []
+for period in periods[:4]:
+    
+    print(f"Downloading {period.yyyymmdd}...", end=" ")
+    result = downloader.download(
+        product=fdc.Product.CALL_SINGLE,
+        period=period.yyyymmdd,
+        format=fdc.FileFormat.TSV
+    )
+    results.append(result)
+    
+    if result.success:
+        print(f"✓ ({result.size_bytes:,} bytes)")
+    else:
+        print(f"✗ Failed: {result.error_message}")
+    
+    # IMPORTANT: Be respectful to government servers
+    # Add delay between requests to avoid overloading the server
+    time.sleep(1)  # 1 second delay - adjust as needed
+
+# Summary
+successful = sum(1 for r in results if r.success)
+print(f"\nCompleted: {successful}/{len(results)} downloads")
+```
+
+Note that the code above downloads just the most recent four files
+available on the site. Remove `[:4]` from the line
+`for period in periods[:4]:` to download *all* files. Note that the
+package website recommends using `time.sleep(5)` in place of
+`time.sleep(1)` to create a five-second delay and this may be a more
+appropriate choice if you are downloading all 99 files using this code.
+Note that the downloaded files occupy about 800 MB of disk space, so
+make sure you have that available if running this code.
+
+#### 1.1.1 XBRL files
+
+While this note does not use the XBRL files, you can download them using
+`ffiec_data_collector` by simply replacing `TSV` with `XBRL` in the code
+above. These zip files are larger than the TSV zip files, occupying
+about 6 GB of disk space. The `ffiec.pq` package does offer some
+rudimentary ability to process these files, but working with them is
+slow. To illustrate I process just one XBRL zip file.
+
+``` r
+
+zipfiles <- ffiec_list_zips(type = "xbrl")
+ffiec_process_xbrls(zipfiles$zipfile[1]) |> system_time()
+```
+
+### 1.2 Processing the data
+
+With the raw data files in hand, the next task is to process these into
+files useful for analysis. For reasons I will discuss below, I will
+process the data into Parquet files. The Parquet format is described in
+*R for Data Science* ([Wickham et al., 2023, p.
+393](#ref-Wickham:2023aa)) as “an open standards-based format widely
+used by big data systems.” Parquet files provide a format optimized for
+data analysis, with a rich type system. More details on the Parquet
+format can be found in [Chapter 22](https://r4ds.hadley.nz/arrow) of
+Wickham et al. ([2023](#ref-Wickham:2023aa)) and every code example in
+Gow and Ding ([2024](#ref-Gow_2024)) can be executed against Parquet
+data files created using my `db2pq` Python package as described in
+Appendix E of that book.
+
+The easiest way to run the code I used to process the data is to install
+the `ffiec.pq` R package I have made available on GitHub. By default,
+the `ffiec.pq` package assumes that the raw data files can be found in a
+directory `ffiec` below the raw data repository and that processed data
+should be written to a directory `ffiec` below the processed Parquet
+repository. If `RAW_DATA_DIR` or `DATA_DIR` is not already set, the
+package will ask for those locations the first time an interactive R
+session needs them and can store the answers in `.Renviron`. The
+processed files will occupy about 3 GB of disk space, so make sure you
+have room for these there.
+
+With the directories resolved, I can load my package and run a single
+command
+[`ffiec_process()`](https://iangow.github.io/ffiec.pq/reference/ffiec_process.md)
+without any arguments to process *all* the raw data files.[^7] This
+takes about five minutes to run (for me):
+
+``` r
+
+results <- ffiec_process(use_multicore = FALSE) |> system_time()
+```
+
+Note that, behind the scenes, the
+[`ffiec_process()`](https://iangow.github.io/ffiec.pq/reference/ffiec_process.md)
+extracts the data in two phases. In the first phase, it processes the
+data for each schedule for each quarter into Parquet file. This results
+in 3,713 Parquet files. In the second phase,
+[`ffiec_process()`](https://iangow.github.io/ffiec.pq/reference/ffiec_process.md)
+proceeds to organize the 3,713 schedule-and-quarter-specific Parquet
+files by variable type to facilitate working with the data. Once the
+data have been organized, the schedule-and-quarter-specific Parquet
+files are discarded.
+
+The `results` table returned by the
+[`ffiec_process()`](https://iangow.github.io/ffiec.pq/reference/ffiec_process.md)
+function above reflects the outcome of the first phase, as that is when
+any problems arising from malformed data are expected to arise. If there
+were any issues in reading the data for a schedule in a quarter, then
+the variable `ok` for the corresponding row of `results` will be
+`FALSE`. We can easily confirm that all rows have `ok` equal to `TRUE`:
+
+``` r
+
+results |> count(ok)
+```
+
+The results table also includes the field `repairs` that we can inspect
+to determine if any “repairs” were made to the data as it was processed
+in the first phase. As can be seen, a minority of the 3,713 first-phase
+files needed repairs. I discuss these repairs in more detail in the
+article on [Call Report curation
+details](https://iangow.github.io/ffiec.pq/articles/call-report-curation-details.html#handling-embedded-newlines-and-tabs).
+
+``` r
+
+results |>
+  unnest(repairs) |>
+  count(repairs)
+```
+
+Gow, I.D., 2026. [Data curation and the data science
+workflow](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6149488).
+
+Gow, I.D., Ding, T., 2024. Empirical research in accounting: Tools and
+methods. Chapman & Hall/CRC. <https://doi.org/10.1201/9781003456230>
+
+Kashyap, A.K., Rajan, R., Stein, J.C., 2002. Banks as liquidity
+providers: An explanation for the co-existence of lending and
+deposit-taking. Journal of Finance 57, 33–63.
+<https://doi.org/10.1111/1540-6261.00415>
+
+Wickham, H., Çetinkaya-Rundel, M., Grolemund, G., 2023. [R for data
+science](https://books.google.com/books?id=TiLEEAAAQBAJ). O’Reilly
+Media, Sebastopol, CA.
+
+[^1]: As will be seen this, this *load* step will not generally be an
+    elaborate one. The inclusion of a separate *load* step serves more
+    to better delineate the distinction between the *Curate* process and
+    the *Understand* process.
+
+[^2]: Execute
+    `install.packages(c("tidyverse", "farr", "DBI", "duckdb", "pak", dbplyr")`
+    within R to install all the packages other than `ffiec.pq` that you
+    will need to run the R code in this note.
+
+[^3]: I already included `pak` in the command in the footnote to the
+    previous paragraph.
+
+[^4]: At the time of writing, there are 99 files, but each quarter will
+    bring a new file to be processed.
+
+[^5]: I discovered this package after writing most of this note. In my
+    case, I pointed-and-clicked to get many of the files and [Martien
+    Lubberink](https://people.wgtn.ac.nz/martien.lubberink) of Victoria
+    University of Wellington kindly provided the rest.
+
+[^6]: For the Python download step, set `RAW_DATA_DIR` in the shell or
+    Python process if it is not already available. Once the data are
+    downloaded, the R package will prompt for `RAW_DATA_DIR` and
+    `DATA_DIR` in interactive sessions if either variable is missing.
+
+[^7]: Note the using the argument `use_multicore = TRUE` gives me about
+    a five-time improvement in performance, but you will see different
+    results depending on your system. You might test the code on a few
+    files before running the whole thing. The
+    [`ffiec_process()`](https://iangow.github.io/ffiec.pq/reference/ffiec_process.md)
+    can accept a list of fully qualified paths to zipfiles, which can be
+    created with the help of
+    [`ffiec_list_zips()`](https://iangow.github.io/ffiec.pq/reference/ffiec_list_zips.md).
