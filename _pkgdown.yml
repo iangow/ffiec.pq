@@ -1,0 +1,45 @@
+url: https://iangow.github.io/ffiec.pq/
+
+template:
+  bootstrap: 5
+
+home:
+  title: Tools for Processing FFIEC Call Report Data
+
+development:
+  mode: release
+
+navbar:
+  structure:
+    left: [intro, reference, articles]
+    right: [search, github]
+
+articles:
+  - title: Data Curation
+    navbar: Data Curation
+    contents:
+      - curate-call-reports
+      - using-call-reports-r
+      - using-call-reports-python
+      - call-report-curation-details
+
+reference:
+  - title: Configuration
+    contents:
+      - ffiec_raw_data_dir
+      - ffiec_data_dir
+  - title: Processing data
+    contents:
+      - ffiec_process
+      - ffiec_process_xbrls
+      - ffiec_list_zips
+  - title: Reading Parquet data
+    contents:
+      - ffiec_scan_pqs
+      - ffiec_list_pqs
+      - ffiec_pivot
+      - ffiec_check_pq_keys
+  - title: Metadata
+    contents:
+      - ffiec_items
+      - ffiec_item_details

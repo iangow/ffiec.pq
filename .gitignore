@@ -2,3 +2,9 @@
 .Rhistory
 .RData
 .Ruserdata
+README.html
+docs/
+pkgdown/
+vignettes/.quarto/
+vignettes/*_cache/
+vignettes/*_files/

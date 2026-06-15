@@ -231,7 +231,11 @@ ffiec_scan_pqs <- function(conn,
     stop("Provide exactly one of `schedule` or `pq_file`.", call. = FALSE)
   }
 
-  pq_path <- resolve_out_dir(data_dir = data_dir, schema = schema)
+  pq_path <- resolve_out_dir(
+    data_dir = data_dir,
+    schema = schema,
+    prompt = !is.null(schedule)
+  )
   if (!is.null(pq_path)) {
     pq_path <- normalizePath(pq_path, mustWork = FALSE)
   }

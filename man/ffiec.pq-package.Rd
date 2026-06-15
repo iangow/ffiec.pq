@@ -13,8 +13,22 @@ including conversion to Parquet format and integration with DuckDB.
 The package supports workflows in R, Python, and SQL by producing
 columnar Parquet files with consistent schemas and metadata.
 }
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://iangow.github.io/ffiec.pq/}
+  \item \url{https://github.com/iangow/ffiec.pq}
+  \item Report bugs at \url{https://github.com/iangow/ffiec.pq/issues}
+}
+
+}
 \author{
 \strong{Maintainer}: Ian Gow \email{iandgow@gmail.com}
+
+Authors:
+\itemize{
+  \item Ian Gow \email{iandgow@gmail.com}
+}
 
 }
 \keyword{internal}

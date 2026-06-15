@@ -27,10 +27,18 @@ Imports:
     dbplyr,
     duckdb
 Suggests:
+    knitr,
+    pkgdown,
+    quarto,
+    rmarkdown,
+    rstudioapi,
     tidyr,
     future,
     furrr,
     xml2
-RoxygenNote: 7.3.3
 Depends: 
     R (>= 4.1.0)
+URL: https://iangow.github.io/ffiec.pq/, https://github.com/iangow/ffiec.pq
+BugReports: https://github.com/iangow/ffiec.pq/issues
+Config/Needs/website: pkgdown, quarto
+Config/roxygen2/version: 8.0.0

@@ -339,27 +339,21 @@ resolve_dirs <- function(raw_data_dir = NULL, data_dir = NULL,
 
 #' @keywords internal
 #' @noRd
-resolve_in_dir <- function(raw_data_dir = NULL, schema = NULL) {
-  base <- if (!is.null(raw_data_dir) && nzchar(raw_data_dir)) {
-    raw_data_dir
-  } else {
-    Sys.getenv("RAW_DATA_DIR", unset = "")
-  }
+resolve_in_dir <- function(raw_data_dir = NULL, schema = NULL,
+                           prompt = interactive()) {
+  base <- ffiec_raw_data_dir(raw_data_dir, prompt = prompt)
 
-  if (!nzchar(base)) return(NULL)
+  if (is.null(base) || !nzchar(base)) return(NULL)
   if (is.null(schema)) base else file.path(base, schema)
 }
 
 #' @keywords internal
 #' @noRd
-resolve_out_dir <- function(data_dir = NULL, schema = NULL) {
-  base <- if (!is.null(data_dir) && nzchar(data_dir)) {
-    data_dir
-  } else {
-    Sys.getenv("DATA_DIR", unset = "")
-  }
+resolve_out_dir <- function(data_dir = NULL, schema = NULL,
+                            prompt = interactive()) {
+  base <- ffiec_data_dir(data_dir, prompt = prompt)
 
-  if (!nzchar(base)) return(NULL)
+  if (is.null(base) || !nzchar(base)) return(NULL)
   if (is.null(schema)) base else file.path(base, schema)
 }
 
