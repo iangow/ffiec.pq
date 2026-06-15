@@ -89,7 +89,7 @@
 </h2>
 <p>I organize raw and processed data in repositories with source-specific subdirectories. For this package, raw FFIEC zip files live under <code>RAW_DATA_DIR/ffiec</code>.</p>
 <p>Set <code>RAW_DATA_DIR</code> in the shell before rendering, or set it in the Python process:</p>
-<div id="c0fd2e6d" class="cell" data-execution_count="1">
+<div id="c0fd2e6d" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> os</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -107,7 +107,7 @@
 <span class="header-section-number">3</span> Download TSV files<a class="anchor" aria-label="anchor" href="#download-tsv-files"></a>
 </h2>
 <p>The following code downloads the four most recent tab-delimited Call Report bulk files. This is a conservative first run that confirms the setup before downloading the complete archive.</p>
-<div id="4e584bcf" class="cell" data-execution_count="2">
+<div id="4e584bcf" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> ffiec_data_collector <span class="im">as</span> fdc</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -136,7 +136,7 @@
 <span id="cb2-26"><a href="#cb2-26" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="ch">\n</span><span class="ss">Completed: </span><span class="sc">{</span>successful<span class="sc">}</span><span class="ss">/</span><span class="sc">{</span><span class="bu">len</span>(results)<span class="sc">}</span><span class="ss"> downloads"</span>)</span></code></pre></div>
 </div>
 <p>To download all TSV files, remove <code>[:4]</code> from:</p>
-<div id="e94aede5" class="cell" data-execution_count="3">
+<div id="e94aede5" class="cell" data-execution_count="4">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> period <span class="kw">in</span> periods[:<span class="dv">4</span>]:</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    ...</span></code></pre></div>
 </div>
@@ -145,7 +145,7 @@
 <span class="header-section-number">4</span> Download XBRL files<a class="anchor" aria-label="anchor" href="#download-xbrl-files"></a>
 </h2>
 <p>The XBRL files are not used in the main Parquet curation workflow, but they can be downloaded by changing the requested file format:</p>
-<div id="118ca8fd" class="cell" data-execution_count="4">
+<div id="118ca8fd" class="cell" data-execution_count="5">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>result <span class="op">=</span> downloader.download(</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>    product<span class="op">=</span>fdc.Product.CALL_SINGLE,</span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>    period<span class="op">=</span>periods[<span class="dv">0</span>].yyyymmdd,</span>
