@@ -3,4 +3,5 @@
 ^inst/pkgdown$
 ^pkgdown$
 ^README\.Rmd$
+^README\.html$
 ^vignettes$
