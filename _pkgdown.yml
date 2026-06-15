@@ -19,6 +19,7 @@ articles:
     navbar: Data Curation
     contents:
       - curate-call-reports
+      - getting-raw-data
       - using-call-reports-r
       - using-call-reports-python
       - call-report-curation-details

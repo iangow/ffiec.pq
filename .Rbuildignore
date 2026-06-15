@@ -5,3 +5,6 @@
 ^README\.Rmd$
 ^README\.html$
 ^vignettes$
+^\.venv$
+^pyproject\.toml$
+^uv\.lock$

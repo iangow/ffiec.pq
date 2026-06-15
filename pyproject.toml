@@ -1,0 +1,17 @@
+[project]
+name = "ffiec-pq-docs"
+version = "0.1.0"
+description = "Python dependencies for ffiec.pq documentation articles"
+requires-python = ">=3.10"
+dependencies = [
+  "ffiec-data-collector",
+  "ipykernel",
+  "jupyter",
+  "matplotlib",
+  "pandas",
+  "polars",
+  "seaborn",
+]
+
+[tool.uv]
+package = false
