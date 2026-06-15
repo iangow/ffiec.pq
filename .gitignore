@@ -5,7 +5,7 @@
 .venv/
 README.html
 docs/
-pkgdown/
+/pkgdown/
 vignettes/.quarto/
 vignettes/*_cache/
 vignettes/*_files/

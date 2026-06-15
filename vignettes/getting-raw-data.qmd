@@ -15,7 +15,8 @@ format:
     toc-depth: 3
     colorlinks: true
 execute:
-  freeze: auto
+  eval: false
+  cache: true
 keywords:
   - Python
   - FFIEC
@@ -26,34 +27,8 @@ This article shows how to download FFIEC Call Report bulk data using Python.
 It is based on the raw-data section of the original note
 ["Data curation: The case of Call Reports"](https://iangow.github.io/notes/published/curate_call_reports.html#sec-raw-data).
 
-The Python chunks are rendered with Quarto's `freeze: auto` setting.
-They execute when the article source changes, and routine package-site builds
-reuse the frozen output otherwise.
-
-## Python environment
-
-The documentation repository includes a `pyproject.toml` for the Python packages
-used by the Python-based articles.
-Using `uv`, create or update the environment with:
-
-```bash
-uv sync
-```
-
-Register the environment as the Jupyter kernel used by this article:
-
-```bash
-uv run python -m ipykernel install --user --name ffiec-pq-docs --display-name "ffiec.pq docs"
-```
-
-To render this article with the Python chunks executed:
-
-```bash
-uv run quarto render vignettes/getting-raw-data.qmd -M execute.eval=true
-```
-
-For a routine website build, omit `-M execute.eval=true`; the Python code will
-be shown but not run.
+The Python chunks are not evaluated during routine package-site builds, because
+running them downloads data from the FFIEC website.
 
 ## FFIEC bulk files
 

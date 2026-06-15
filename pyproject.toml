@@ -7,6 +7,7 @@ dependencies = [
   "ffiec-data-collector",
   "ipykernel",
   "jupyter",
+  "jupyter-cache",
   "matplotlib",
   "pandas",
   "polars",
