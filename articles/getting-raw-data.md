@@ -1,0 +1,127 @@
+# Getting the raw Call Report data
+
+This article shows how to download FFIEC Call Report bulk data using
+Python. It is based on the raw-data section of the original note [“Data
+curation: The case of Call
+Reports”](https://iangow.github.io/notes/published/curate_call_reports.html#sec-raw-data).
+
+The Python chunks are not evaluated during routine package-site builds,
+because running them downloads data from the FFIEC website.
+
+## 1 FFIEC bulk files
+
+The FFIEC [Bulk Data Download
+site](https://cdr.ffiec.gov/public/pws/downloadbulkdata.aspx) provides
+Call Report data in two forms:
+
+- zipped tab-delimited data files, one for each quarter
+- zipped XBRL data files, one for each quarter
+
+At the time I wrote the original note, getting the complete archive
+through the website meant downloading roughly 100 files for each format.
+The data are not as amenable to automated downloading as some other
+government data sets, but the Python package `ffiec_data_collector` can
+collect the files.
+
+## 2 Raw data directory
+
+I organize raw and processed data in repositories with source-specific
+subdirectories. For this package, raw FFIEC zip files live under
+`RAW_DATA_DIR/ffiec`.
+
+Set `RAW_DATA_DIR` in the shell before rendering, or set it in the
+Python process:
+
+``` python
+import os
+from pathlib import Path
+
+# Uncomment and edit this line if RAW_DATA_DIR is not set in your shell.
+# os.environ["RAW_DATA_DIR"] = "/path/to/raw_data"
+
+raw_data_dir = Path(os.environ["RAW_DATA_DIR"]).expanduser()
+download_dir = raw_data_dir / "ffiec"
+download_dir.mkdir(parents=True, exist_ok=True)
+
+print(download_dir)
+```
+
+The R package will separately prompt for `RAW_DATA_DIR` and `DATA_DIR`
+in interactive sessions if either variable is missing when processing or
+reading the data.
+
+## 3 Download TSV files
+
+The following code downloads the four most recent tab-delimited Call
+Report bulk files. This is a conservative first run that confirms the
+setup before downloading the complete archive.
+
+``` python
+import time
+import ffiec_data_collector as fdc
+
+downloader = fdc.FFIECDownloader(download_dir=download_dir)
+periods = downloader.select_product(fdc.Product.CALL_SINGLE)
+
+results = []
+for period in periods[:4]:
+    print(f"Downloading {period.yyyymmdd}...", end=" ")
+    result = downloader.download(
+        product=fdc.Product.CALL_SINGLE,
+        period=period.yyyymmdd,
+        format=fdc.FileFormat.TSV,
+    )
+    results.append(result)
+
+    if result.success:
+        print(f"success ({result.size_bytes:,} bytes)")
+    else:
+        print(f"failed: {result.error_message}")
+
+    # Be respectful to government servers.
+    time.sleep(1)
+
+successful = sum(1 for result in results if result.success)
+print(f"\nCompleted: {successful}/{len(results)} downloads")
+```
+
+To download all TSV files, remove `[:4]` from:
+
+``` python
+for period in periods[:4]:
+    ...
+```
+
+For a full archive download, consider using a longer delay, such as
+`time.sleep(5)`. The TSV zip files occupy roughly 800 MB at the time of
+the original note, so confirm that the target disk has enough space.
+
+## 4 Download XBRL files
+
+The XBRL files are not used in the main Parquet curation workflow, but
+they can be downloaded by changing the requested file format:
+
+``` python
+result = downloader.download(
+    product=fdc.Product.CALL_SINGLE,
+    period=periods[0].yyyymmdd,
+    format=fdc.FileFormat.XBRL,
+)
+```
+
+The XBRL archive is much larger than the TSV archive; the original note
+estimated it at roughly 6 GB.
+
+## 5 Next step
+
+After the raw zip files are available in `RAW_DATA_DIR/ffiec`, process
+them from R:
+
+``` r
+
+library(ffiec.pq)
+
+results <- ffiec_process(use_multicore = FALSE)
+```
+
+The processing step writes Parquet files under `DATA_DIR/ffiec`.

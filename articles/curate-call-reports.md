@@ -137,111 +137,12 @@ Call Reports data from the FFIEC source.
 
 The FFIEC [Bulk Data Download
 site](https://cdr.ffiec.gov/public/pws/downloadbulkdata.aspx) provides
-the Call Report data in two forms. The first is as zipped tab-delimited
-data files, one for each quarter. The second is as zipped XBRL data
-files, one for each quarter. At the time of writing, the standard
-approach to getting the complete data archive amounts to pointing and
-clicking to download each of the roughly 100 files for each format.[^4]
-
-The FFIEC data sets are not as amenable to automated downloading as
-those offered by other government agencies such as the SEC (see my
-earlier [note on XBRL
-data](https://iangow.github.io/notes/published/getting_dera_notes.html)),
-the PCAOB (see my [note on Form AP
-data](https://iangow.github.io/notes/form_ap_names.html)), or even the
-Federal Reserve itself (I used data from the [MDRM
-site](https://www.federalreserve.gov/apps/mdrm/) in preparing this
-note). However, a group of individuals has contributed the Python
-package `ffiec_data_collector` that we can use to collect the data.[^5]
-
-To install this Python package, you first need to [install
-Python](https://www.python.org/downloads/) and then install the
-`ffiec_data_collector` using a command like
-`pip install ffiec_data_collector`.
-
-As discussed in [Appendix
-E](https://iangow.github.io/far_book/parquet-wrds.html) of Gow and Ding
-([2024](#ref-Gow_2024)), I organize my raw and processed data in
-repositories comprising a parent directory and several sub-directories
-corresponding to various data sources and projects. For some data sets,
-this approach to organization facilitates switching code from using
-(say) data sources provided by Wharton Research Data Services (WRDS) to
-using local data in my data repository. I will adopt that approach for
-the purposes of this note.
-
-As the location of my “raw data” repository is found in the the
-environment variable `RAW_DATA_DIR`, I can identify that location in
-Python easily. The following code specifies the download directory as
-the directory `ffiec` within my raw data repository.[^6]
-
-``` python
-import os
-from pathlib import Path
-print(os.environ['RAW_DATA_DIR'])
-download_dir = Path(os.environ['RAW_DATA_DIR']) / "ffiec"
-```
-
-Having specified a location to put the downloaded files, it is a simple
-matter to adapt a script provided on the [package
-website](https://ffiec-data-collector.readthedocs.io/en/latest/getting_started.html#basic-usage)
-to download the raw data files.
-
-``` python
-import ffiec_data_collector as fdc
-import time
-
-downloader = fdc.FFIECDownloader(download_dir=download_dir)
-
-periods = downloader.select_product(fdc.Product.CALL_SINGLE)
-
-results = []
-for period in periods[:4]:
-    
-    print(f"Downloading {period.yyyymmdd}...", end=" ")
-    result = downloader.download(
-        product=fdc.Product.CALL_SINGLE,
-        period=period.yyyymmdd,
-        format=fdc.FileFormat.TSV
-    )
-    results.append(result)
-    
-    if result.success:
-        print(f"✓ ({result.size_bytes:,} bytes)")
-    else:
-        print(f"✗ Failed: {result.error_message}")
-    
-    # IMPORTANT: Be respectful to government servers
-    # Add delay between requests to avoid overloading the server
-    time.sleep(1)  # 1 second delay - adjust as needed
-
-# Summary
-successful = sum(1 for r in results if r.success)
-print(f"\nCompleted: {successful}/{len(results)} downloads")
-```
-
-Note that the code above downloads just the most recent four files
-available on the site. Remove `[:4]` from the line
-`for period in periods[:4]:` to download *all* files. Note that the
-package website recommends using `time.sleep(5)` in place of
-`time.sleep(1)` to create a five-second delay and this may be a more
-appropriate choice if you are downloading all 99 files using this code.
-Note that the downloaded files occupy about 800 MB of disk space, so
-make sure you have that available if running this code.
-
-#### 1.1.1 XBRL files
-
-While this note does not use the XBRL files, you can download them using
-`ffiec_data_collector` by simply replacing `TSV` with `XBRL` in the code
-above. These zip files are larger than the TSV zip files, occupying
-about 6 GB of disk space. The `ffiec.pq` package does offer some
-rudimentary ability to process these files, but working with them is
-slow. To illustrate I process just one XBRL zip file.
-
-``` r
-
-zipfiles <- ffiec_list_zips(type = "xbrl")
-ffiec_process_xbrls(zipfiles$zipfile[1]) |> system_time()
-```
+the Call Report data in two forms: zipped tab-delimited data files and
+zipped XBRL data files, one for each quarter. The package-site article
+[Getting the raw Call Report
+data](https://iangow.github.io/ffiec.pq/articles/getting-raw-data.md)
+shows how to use Python and `ffiec_data_collector` to download these
+files into `RAW_DATA_DIR/ffiec`.
 
 ### 1.2 Processing the data
 
@@ -272,7 +173,7 @@ have room for these there.
 With the directories resolved, I can load my package and run a single
 command
 [`ffiec_process()`](https://iangow.github.io/ffiec.pq/reference/ffiec_process.md)
-without any arguments to process *all* the raw data files.[^7] This
+without any arguments to process *all* the raw data files.[^4] This
 takes about five minutes to run (for me):
 
 ``` r
@@ -346,20 +247,7 @@ Media, Sebastopol, CA.
 [^3]: I already included `pak` in the command in the footnote to the
     previous paragraph.
 
-[^4]: At the time of writing, there are 99 files, but each quarter will
-    bring a new file to be processed.
-
-[^5]: I discovered this package after writing most of this note. In my
-    case, I pointed-and-clicked to get many of the files and [Martien
-    Lubberink](https://people.wgtn.ac.nz/martien.lubberink) of Victoria
-    University of Wellington kindly provided the rest.
-
-[^6]: For the Python download step, set `RAW_DATA_DIR` in the shell or
-    Python process if it is not already available. Once the data are
-    downloaded, the R package will prompt for `RAW_DATA_DIR` and
-    `DATA_DIR` in interactive sessions if either variable is missing.
-
-[^7]: Note the using the argument `use_multicore = TRUE` gives me about
+[^4]: Note the using the argument `use_multicore = TRUE` gives me about
     a five-time improvement in performance, but you will see different
     results depending on your system. You might test the code on a few
     files before running the whole thing. The
