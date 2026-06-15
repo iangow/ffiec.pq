@@ -1,5 +1,6 @@
 ---
 title: "Getting the raw Call Report data"
+jupyter: ffiec-pq-docs
 author:
   - name: Ian D. Gow
     orcid: 0000-0002-6243-8409
@@ -14,7 +15,7 @@ format:
     toc-depth: 3
     colorlinks: true
 execute:
-  eval: false
+  freeze: auto
 keywords:
   - Python
   - FFIEC
@@ -25,10 +26,9 @@ This article shows how to download FFIEC Call Report bulk data using Python.
 It is based on the raw-data section of the original note
 ["Data curation: The case of Call Reports"](https://iangow.github.io/notes/published/curate_call_reports.html#sec-raw-data).
 
-The code chunks are not evaluated during routine package-site builds, because
-running them downloads data from the FFIEC website.
-To execute the chunks locally, create the Python environment described below and
-render this article with execution enabled.
+The Python chunks are rendered with Quarto's `freeze: auto` setting.
+They execute when the article source changes, and routine package-site builds
+reuse the frozen output otherwise.
 
 ## Python environment
 
@@ -76,7 +76,7 @@ For this package, raw FFIEC zip files live under `RAW_DATA_DIR/ffiec`.
 Set `RAW_DATA_DIR` in the shell before rendering, or set it in the Python
 process:
 
-```python
+```{python}
 import os
 from pathlib import Path
 
@@ -101,7 +101,7 @@ files.
 This is a conservative first run that confirms the setup before downloading the
 complete archive.
 
-```python
+```{python}
 import time
 import ffiec_data_collector as fdc
 
@@ -132,7 +132,7 @@ print(f"\nCompleted: {successful}/{len(results)} downloads")
 
 To download all TSV files, remove `[:4]` from:
 
-```python
+```{python}
 for period in periods[:4]:
     ...
 ```
@@ -147,7 +147,7 @@ confirm that the target disk has enough space.
 The XBRL files are not used in the main Parquet curation workflow, but they can
 be downloaded by changing the requested file format:
 
-```python
+```{python}
 result = downloader.download(
     product=fdc.Product.CALL_SINGLE,
     period=periods[0].yyyymmdd,
